@@ -1,3 +1,11 @@
+//!
+//!	binja_coolsigmaker
+//!
+//! a cooler sigmaker for binja
+//!
+//! written by unknowntrojan
+//!
+
 #![feature(is_some_and, let_chains, core_intrinsics, iter_array_chunks)]
 use std::ffi::CString;
 use std::ops::Range;
@@ -566,7 +574,7 @@ impl AddressCommand for CStrSigMakerCommand {
 
 impl Command for SigFinderCommand {
     fn action(&self, bv: &BinaryView) {
-        // please don't look a this code. its absolutely disgusting. i hate working with string so much.
+        // please don't look a this code. its absolutely disgusting. i hate working with strings so much.
 
         let Ok(mut sig) = get_clipboard_contents() else {
 			log::error!("unable to get signature from clipboard!");
