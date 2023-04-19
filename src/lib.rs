@@ -111,11 +111,8 @@ fn get_relocation_ranges(bv: &BinaryView) -> Vec<Range<u64>> {
 
     ret
 }
-fn find_patterns(bv: &BinaryView, pattern: Pattern) -> Vec<usize> {
-    if pattern.len() == 0 {
-        return Vec::new();
-    }
 
+fn get_code(bv: &BinaryView) -> Vec<(usize, Vec<u8>)> {
     bv.segments()
         .into_iter()
         .filter(|segment| segment.contains_code())
@@ -124,21 +121,34 @@ fn find_patterns(bv: &BinaryView, pattern: Pattern) -> Vec<usize> {
             let len = range.end.checked_sub(range.start);
 
             let Some(len) = len else {
-				return Vec::new();
+				return (range.start as usize, Vec::new());
 			};
 
             if len == 0 {
-                return Vec::new();
+                return (range.start as usize, Vec::new());
             }
 
             let mut data = vec![0u8; len as usize];
 
             bv.read(&mut data, range.start);
 
-            findpattern::find_patterns_par(&data, &pattern)
+            (range.start as usize, data)
+        })
+        .collect()
+}
+
+fn find_patterns(code_segments: &[(usize, Vec<u8>)], pattern: Pattern) -> Vec<usize> {
+    if pattern.len() == 0 {
+        return Vec::new();
+    }
+
+    code_segments
+        .into_iter()
+        .map(|segment| {
+            findpattern::find_patterns(&segment.1, &pattern)
                 .into_iter()
-                .map(|x| x + range.start as usize)
-                .collect()
+                .map(|x| x + segment.0 as usize)
+                .collect::<Vec<usize>>()
         })
         .flatten()
         .collect()
@@ -241,13 +251,14 @@ fn get_instruction_pattern(
     Some(pattern)
 }
 
-fn is_pattern_unique(bv: &BinaryView, pattern: Pattern) -> bool {
-    find_patterns(bv, pattern).len() == 1
+fn is_pattern_unique(code_segments: &[(usize, Vec<u8>)], pattern: Pattern) -> bool {
+    find_patterns(code_segments, pattern).len() == 1
 }
 
 fn create_pattern_internal(
     bv: &BinaryView,
     addr: usize,
+    data: &[(usize, Vec<u8>)],
     include_operands: bool,
 ) -> Option<OwnedPattern> {
     log::info!("creating pattern for address {:#04X}", addr);
@@ -295,8 +306,14 @@ fn create_pattern_internal(
             return None;
         }
 
-        current_buffer.copy_from_slice(&[0u8; MAX_INSTRUCTION_LENGTH]);
-        bv.read(&mut current_buffer, (addr + current_offset) as u64);
+        current_buffer.copy_from_slice(
+            &data
+                .iter()
+                .find(|segment| segment.0 == start_segment.address_range().start as usize)?
+                .1[addr + current_offset - start_segment.address_range().start as usize
+                ..addr + current_offset + MAX_INSTRUCTION_LENGTH
+                    - start_segment.address_range().start as usize],
+        );
 
         let mut decoder = iced_x86::Decoder::new(
             if let Some(arch) = bv.default_arch() {
@@ -327,7 +344,7 @@ fn create_pattern_internal(
         current_pattern.extend(&instr_pattern);
 
         current_offset += instr.len();
-        pattern_unique = is_pattern_unique(bv, &current_pattern);
+        pattern_unique = is_pattern_unique(&data, &current_pattern);
     }
 
     while let Some(x) = current_pattern.last() && x.is_none() {
@@ -344,11 +361,12 @@ fn create_pattern_internal(
 
 fn create_pattern(bv: &BinaryView, addr: usize) -> Option<OwnedPattern> {
     let include_operands = get_include_operands(bv);
-    let pattern = create_pattern_internal(bv, addr, include_operands);
+    let data = get_code(bv);
+    let pattern = create_pattern_internal(bv, addr, &data, include_operands);
 
     if !include_operands && pattern.is_none() {
         log::warn!("unable to find a unique pattern that didn't include operands. trying again with operands!");
-        create_pattern_internal(bv, addr, true)
+        create_pattern_internal(bv, addr, &data, true)
     } else {
         pattern
     }
@@ -555,6 +573,8 @@ impl Command for SigFinderCommand {
 			return;
 		};
 
+        let data = get_code(bv);
+
         sig = sig.replace("\n", "");
         sig = sig.replace("\r", "");
         sig = sig.replace("\t", "");
@@ -621,7 +641,7 @@ impl Command for SigFinderCommand {
             }
         }
 
-        for occurrence in find_patterns(bv, &pattern) {
+        for occurrence in find_patterns(&data, &pattern) {
             log::info!("found signature at {:#04X}", occurrence);
         }
 
