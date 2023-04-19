@@ -1,0 +1,18 @@
+[package]
+name    = "binja_sigmaker"
+version = "0.1.0"
+authors = ["unknowntrojan"]
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+binaryninja = { git = "https://github.com/Vector35/binaryninja-api.git", branch = "dev" }
+iced-x86    = "1.17.0"
+
+log = "0.4.17"
+
+findpattern = { git = "https://github.com/unknowntrojan/findpattern", features = ["parallel"] }
+
+clipboard = "0.5.0"
