@@ -851,6 +851,8 @@ impl Command for SigFinderCommand {
 pub extern "C" fn CorePluginInit() -> bool {
     binaryninja::logger::init(log::LevelFilter::Info).unwrap();
 
+    // TODO: (maybe) if signature not found, maybe go back a few instructions and attempt to create a signature with an offset.
+
     // external_logger::init().unwrap();
     log::info!("say hello to the little ninja in your binja");
 
@@ -872,13 +874,13 @@ pub extern "C" fn CorePluginInit() -> bool {
     register_settings();
 
     command::register_for_address(
-        "CoolSigMaker\\Create Signature from Address",
+        "CSM - Create Signature from Address",
         "Creates a Signature from the currently selected address",
         SigMakerCommand {},
     );
 
     command::register(
-        "CoolSigMaker\\Find Signature",
+        "CSM - Find Signature",
         "Finds a signature in the binary.",
         SigFinderCommand {},
     );
