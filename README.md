@@ -13,3 +13,10 @@ These are the settings:
 This is how it looks to create a signature, then scan for it:
 
 ![pattern creation and scanning](https://i.imgur.com/qkjdU2M.png)
+
+## How to install
+
+1. Download the platform-appropiate binary from release section
+2. Place the binary in your Binary Ninja installation's plugin folder
+
+Once GitHub Actions are set up and a loader plugin has been written, you will be able to install the plugin via the official plugin manager.
