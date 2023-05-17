@@ -856,6 +856,7 @@ pub extern "C" fn CorePluginInit() -> bool {
     // TODO: (maybe) if signature not found, maybe go back a few instructions and attempt to create a signature with an offset.
 
     // external_logger::init().unwrap();
+    log::info!("binja_coolsigmaker by unknowntrojan loaded!");
     log::info!("say hello to the little ninja in your binja");
 
     // #[cfg(debug_assertions)]
