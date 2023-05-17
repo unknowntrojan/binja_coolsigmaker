@@ -229,6 +229,8 @@ fn get_instruction_pattern(
         }
     }
 
+    // 0x10000000 constants here are what iced-x86 bases its disassembly on.
+
     if !include_operands && offsets.has_immediate() {
         let branch_target = instr
             .op_kinds()
