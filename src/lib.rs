@@ -871,7 +871,7 @@ pub extern "C" fn CorePluginInit() -> bool {
     log::info!("binja_coolsigmaker by unknowntrojan loaded!");
     log::info!("say hello to the little ninja in your binja");
 
-    // #[cfg(debug_assertions)]
+    #[cfg(debug_assertions)]
     std::panic::set_hook(Box::new(|info| {
         let string = format!(
             "{}\n{:#?}\n{}",
