@@ -24,3 +24,11 @@ This is how it looks to create a signature, then scan for it:
 2. Place the binary in your Binary Ninja installation's plugin folder
 
 Once GitHub Actions are set up and a loader plugin has been written, you will be able to install the plugin via the official plugin manager.
+
+## Compiling yourself
+
+This project requires the nightly channel of Rust.
+
+Check the Cargo.toml file and adjust the binaryninja dependency so it points to whatever Binja update channel you want to compile for. !MAKE SURE! you remove the Cargo.lock file. Otherwise, it'll keep using whatever version was selected when you built or rust-analyzer ran.
+
+The Stable tag needs to be updated periodically, there is no "newest-stable" tag.
