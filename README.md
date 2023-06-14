@@ -6,6 +6,10 @@ This is why I wrote this plugin. It's a signature scanning and creating plugin w
 
 It supports 3 styles of signatures. Or 4, if you want to be specific.
 
+To create a signature, select the instruction you want the signature to point to, then go to Plugins->CSM - Create Signature
+
+To find a signature, copy the signature to your clipboard in the format you selected in the configuration, and go to Plugins->CSM - Find Signature. All occurrences will be in your log.
+
 These are the settings:
 
 ![settings](https://i.imgur.com/BK4Q0E5.png)
