@@ -6,9 +6,11 @@ This is why I wrote this plugin. It's a signature scanning and creating plugin f
 
 It supports 3 styles of signatures. Or 4, if you want to be specific.
 
-To create a signature, select the instruction you want the signature to point to, then go to Plugins->CSM - Create Signature
+To create a signature, select the instruction you want the signature to point to, then go to `Plugins->CSM - Create Signature`.
 
-To find a signature, copy the signature to your clipboard in the format you selected in the configuration, and go to Plugins->CSM - Find Signature. All occurrences will be in your log.
+The signature is checked for uniqueness within all executable segments of the binary. `.data` is not considered, so make sure your signature scanning implementation also ignores non-code sections.
+
+To find a signature, copy the signature to your clipboard in the format you selected in the configuration, and go to `Plugins->CSM - Find Signature`. All occurrences will be in your log.
 
 These are the settings:
 
@@ -29,6 +31,6 @@ Once GitHub Actions are set up and a loader plugin has been written, you will be
 
 This project requires the nightly channel of Rust.
 
-Check the Cargo.toml file and adjust the binaryninja dependency so it points to whatever Binja update channel you want to compile for. !MAKE SURE! you remove the Cargo.lock file. Otherwise, it'll keep using whatever version was selected when you built or rust-analyzer ran.
+Check the Cargo.toml file and adjust the `binaryninja` dependency so it points to whatever Binja update channel you want to compile for. __!MAKE SURE!__ Cargo caught your change of branch. It sometimes doesn't realize you changed it. Delete `Cargo.lock` and/or run `cargo clean`. Otherwise, it'll keep using whatever version was selected when you built or rust-analyzer ran.
 
 The Stable tag needs to be updated periodically, there is no "newest-stable" tag.

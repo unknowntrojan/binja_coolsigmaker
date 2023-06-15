@@ -26,20 +26,28 @@ use std::str::FromStr;
 use std::sync::atomic::AtomicUsize;
 use std::time::SystemTime;
 
-use binaryninja::architecture::Architecture;
-
-use binaryninja::binaryninjacore_sys::{
-    BNBinaryView, BNCreateSettings, BNFreeRelocationRanges, BNFreeSettings, BNFreeString,
-    BNGetRelocationRanges, BNSettings, BNSettingsGetBool, BNSettingsGetString, BNSettingsGetUInt64,
-    BNSettingsRegisterGroup, BNSettingsRegisterSetting,
+use binaryninja::{
+    architecture::Architecture,
+    binaryninjacore_sys::{
+        BNBinaryView, BNCreateSettings, BNFreeFunctionList, BNFreeRelocationRanges, BNFreeSettings,
+        BNFreeString, BNGetAnalysisFunctionsContainingAddress, BNGetRelocationRanges, BNSettings,
+        BNSettingsGetBool, BNSettingsGetString, BNSettingsGetUInt64, BNSettingsRegisterGroup,
+        BNSettingsRegisterSetting,
+    },
+    binaryview::{BinaryView, BinaryViewBase, BinaryViewExt},
+    command::{self, AddressCommand, Command},
+    function::Function,
 };
-use binaryninja::binaryview::{BinaryView, BinaryViewBase, BinaryViewExt};
-use binaryninja::command::{self, AddressCommand, Command};
+
 use clipboard::ClipboardProvider;
-use iced_x86::Code::{DeclareByte, DeclareDword, DeclareQword, DeclareWord};
-use iced_x86::{ConstantOffsets, FlowControl, Formatter, Instruction, NasmFormatter, OpKind};
-use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
-use rayon::slice::ParallelSlice;
+use iced_x86::{
+    Code::{DeclareByte, DeclareDword, DeclareQword, DeclareWord},
+    ConstantOffsets, FlowControl, Formatter, Instruction, NasmFormatter, OpKind,
+};
+use rayon::{
+    prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
+    slice::ParallelSlice,
+};
 use strum::{
     Display, EnumIter, EnumMessage, EnumString, EnumVariantNames, IntoEnumIterator, VariantNames,
 };
@@ -176,10 +184,32 @@ fn get_relocation_ranges(bv: &BinaryView) -> Vec<Range<u64>> {
     ret
 }
 
+fn get_functions_at(bv: &BinaryView, addr: u64) -> Vec<Function> {
+    unsafe {
+        let mut count = 0usize;
+        let ptr = BNGetAnalysisFunctionsContainingAddress(
+            *std::mem::transmute::<_, *mut *mut BNBinaryView>(bv),
+            addr,
+            &mut count as *mut usize,
+        );
+
+        let funcs = std::slice::from_raw_parts(ptr, count);
+
+        let funcs = funcs.to_vec();
+
+        BNFreeFunctionList(ptr, count);
+
+        funcs
+            .into_iter()
+            .map(|func| std::mem::transmute::<_, Function>(func))
+            .collect()
+    }
+}
+
 fn get_code(bv: &BinaryView) -> Vec<(usize, Vec<u8>)> {
     bv.segments()
         .into_iter()
-        .filter(|segment| segment.contains_code())
+        .filter(|segment| segment.executable() || segment.contains_code())
         .map(|segment| {
             let range = segment.address_range();
             let len = range.end.checked_sub(range.start);
@@ -376,22 +406,20 @@ fn create_pattern_internal(
 			return None;
 		};
 
-        let Some(end_segment) = bv.segment_at((addr + current_offset) as u64) else {
-			log::warn!("unable to query instruction segment");
-			return None;
-		};
+        let instr_len: usize = bv
+            .default_arch()
+            .map(|arch| {
+                bv.instruction_len(&arch, addr as u64 - start_segment.address_range().start)
+            })
+            .flatten()
+            .unwrap_or(MAX_INSTRUCTION_LENGTH);
 
-        if !start_segment.contains_code()
-            || !start_segment.readable()
-            || !start_segment.executable()
-            || !start_segment
-                .address_range()
-                .contains(&((addr + current_offset) as u64))
-            || !start_segment
-                .address_range()
-                .contains(&((addr + current_offset + MAX_INSTRUCTION_LENGTH) as u64))
-            || start_segment.address_range().start != end_segment.address_range().start
-        {
+        if bv.default_platform().is_some_and(|x| {
+            bv.function_at(&*x, addr as u64).is_ok_and(|lhs| {
+                bv.function_at(&*x, (addr + current_offset + instr_len) as u64)
+                    .is_ok_and(|rhs| lhs.start() == rhs.start())
+            })
+        }) {
             log::warn!("pattern is not unique yet, but continuing would access invalid memory.");
             return None;
         }
@@ -401,8 +429,7 @@ fn create_pattern_internal(
                 .iter()
                 .find(|segment| segment.0 == start_segment.address_range().start as usize)?
                 .1[addr + current_offset - start_segment.address_range().start as usize
-                ..addr + current_offset + MAX_INSTRUCTION_LENGTH
-                    - start_segment.address_range().start as usize],
+                ..addr + current_offset + instr_len - start_segment.address_range().start as usize],
         );
 
         let mut decoder = iced_x86::Decoder::new(
@@ -464,15 +491,12 @@ fn create_pattern(bv: &BinaryView, addr: usize) -> Option<OwnedPattern> {
 
 fn is_valid(bv: &BinaryView, range: Range<u64>) -> bool {
     // range is nonzero
-    if bv.segment_at(range.start).is_some_and(|x| {
-        x.contains_code()
-            && x.address_range().contains(&range.start)
-            && x.address_range().contains(&range.end)
-    }) && bv.segment_at(range.end).is_some_and(|x| {
-        x.contains_code()
-            && x.address_range().contains(&range.start)
-            && x.address_range().contains(&range.end)
-    }) {
+    // if bv.functions().iter().any(|func| {
+    //     func.address_ranges()
+    //         .into_iter()
+    //         .any(|func_range| (func_range.start()..func_range.end()).contains(&range.start))
+    // }) {
+    if !get_functions_at(bv, range.start).is_empty() {
         true
     } else {
         false
@@ -867,7 +891,6 @@ pub extern "C" fn CorePluginInit() -> bool {
 
     // TODO: (maybe) if signature not found, maybe go back a few instructions and attempt to create a signature with an offset.
 
-    // external_logger::init().unwrap();
     log::info!("binja_coolsigmaker by unknowntrojan loaded!");
     log::info!("say hello to the little ninja in your binja");
 
