@@ -2,7 +2,7 @@
 
 We all know signature scanning can be extremely useful. Sadly, the two public offerings for Binja are either very slow, or crash extremely often.
 
-This is why I wrote this plugin. It's a signature scanning and creating plugin written in Rust. It's extremely fast, supports multiple signature styles, and works like a charm.
+This is why I wrote this plugin. It's a signature scanning and creating plugin for x86 (more archs are planned!), written in Rust. It's extremely fast, supports multiple signature styles, and works like a charm.
 
 It supports 3 styles of signatures. Or 4, if you want to be specific.
 
