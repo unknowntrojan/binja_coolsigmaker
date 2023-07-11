@@ -10,13 +10,16 @@ crate-type = ["cdylib"]
 [dependencies]
 log       = "0.4.17"
 clipboard = "0.5.0"
+# Local
 # binaryninja = { path = "../binaryninja-api/rust" }
 # Dev
-# binaryninja = { git = "https://github.com/Vector35/binaryninja-api.git", branch = "dev" }
+binaryninja = { git = "https://github.com/Vector35/binaryninja-api.git", branch = "dev" }
 # Stable
-binaryninja = { git = "https://github.com/Vector35/binaryninja-api.git", tag = "v3.4.4271-stable" }
-rayon       = "1.7.0"
-iced-x86    = "1.17.0"
-strum       = { version = "0.24.1", features = ["derive"] }
-serde       = { version = "1.0.152", features = ["std"] }
-serde_json  = "1.0.93"
+# binaryninja = { git = "https://github.com/Vector35/binaryninja-api.git", tag = "v3.4.4271-stable" }
+rayon           = "1.7.0"
+iced-x86        = "1.17.0"
+strum           = { version = "0.25.0", features = ["derive"] }
+serde           = { version = "1.0.152", features = ["std"] }
+serde_json      = "1.0.93"
+thiserror       = "1.0.43"
+coolfindpattern = "0.1.3"

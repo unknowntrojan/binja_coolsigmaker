@@ -19,35 +19,30 @@
 //!
 
 #![feature(let_chains, core_intrinsics, iter_array_chunks)]
-use std::ffi::{CStr, CString};
+use std::borrow::Cow;
+
 use std::fmt::Display;
 use std::ops::Range;
 use std::str::FromStr;
 use std::sync::atomic::AtomicUsize;
 use std::time::SystemTime;
 
+use binaryninja::settings::Settings;
 use binaryninja::{
     architecture::Architecture,
-    binaryninjacore_sys::{
-        BNBinaryView, BNCreateSettings, BNFreeFunctionList, BNFreeRelocationRanges, BNFreeSettings,
-        BNFreeString, BNGetAnalysisFunctionsContainingAddress, BNGetRelocationRanges, BNSettings,
-        BNSettingsGetBool, BNSettingsGetString, BNSettingsGetUInt64, BNSettingsRegisterGroup,
-        BNSettingsRegisterSetting,
-    },
+    binaryninjacore_sys::{BNBinaryView, BNFreeRelocationRanges, BNGetRelocationRanges},
     binaryview::{BinaryView, BinaryViewBase, BinaryViewExt},
     command::{self, AddressCommand, Command},
-    function::Function,
 };
 
 use clipboard::ClipboardProvider;
+use coolfindpattern::PatternSearcher;
 use iced_x86::{
     Code::{DeclareByte, DeclareDword, DeclareQword, DeclareWord},
     ConstantOffsets, FlowControl, Formatter, Instruction, NasmFormatter, OpKind,
 };
-use rayon::{
-    prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
-    slice::ParallelSlice,
-};
+use rayon::prelude::ParallelBridge;
+use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use strum::{
     Display, EnumIter, EnumMessage, EnumString, EnumVariantNames, IntoEnumIterator, VariantNames,
 };
@@ -76,12 +71,24 @@ impl Default for SignatureType {
 struct SigMakerCommand;
 struct SigFinderCommand;
 
-struct RustPattern<'a>(Pattern<'a>);
-struct IDAOnePattern<'a>(Pattern<'a>);
-struct IDATwoPattern<'a>(Pattern<'a>);
-struct CStrPattern<'a>(Pattern<'a>);
+#[derive(thiserror::Error, Debug)]
+enum SignatureError {
+    #[error("pattern is not unique even at maxmimum size of {0} bytes")]
+    NotUnique(u64),
+    #[error("pattern is not unique yet, but continuing would cross a function boundary")]
+    OutOfBounds,
+    #[error("encountered an invalid instruction")]
+    InvalidInstruction,
+    #[error("unable to query instruction's segment")]
+    InvalidSegment,
+}
 
-const MAX_INSTRUCTION_LENGTH: usize = 15;
+struct RustPattern<'a>(Cow<'a, OwnedPattern>);
+struct IDAOnePattern<'a>(Cow<'a, OwnedPattern>);
+struct IDATwoPattern<'a>(Cow<'a, OwnedPattern>);
+struct CStrPattern<'a>(Cow<'a, OwnedPattern>);
+
+const MAX_INSTRUCTION_LENGTH: u64 = 15;
 
 impl<'a> core::fmt::Display for RustPattern<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -160,6 +167,128 @@ impl<'a> core::fmt::Display for CStrPattern<'a> {
     }
 }
 
+impl FromSignature for OwnedPattern {}
+
+trait FromSignature {
+    fn from_signature(mut pattern: String, signature_type: SignatureType) -> Option<OwnedPattern> {
+        log::info!("attempting to parse a {signature_type}-style signature! \"{pattern}\"");
+
+        pattern = pattern.replace("\n", "");
+        pattern = pattern.replace("\r", "");
+        pattern = pattern.replace("\t", "");
+        pattern = pattern.trim().to_string();
+
+        pub fn parse_idaone(mut pattern: String) -> Option<OwnedPattern> {
+            // E9 ? ? ? ? 90 90
+            pattern = pattern.replace("?", "??");
+            parse_idatwo(pattern)
+        }
+
+        fn parse_idatwo(mut pattern: String) -> Option<OwnedPattern> {
+            // E9 ?? ?? ?? ?? 90 90
+            pattern = pattern.replace(" ", "");
+
+            pattern
+                .chars()
+                .array_chunks::<2>()
+                .try_fold(OwnedPattern::new(), |mut acc, byte| {
+                    if byte == ['?', '?'] {
+                        acc.push(None);
+                    } else {
+                        let Ok(byte) = u8::from_str_radix(&format!("{}{}", byte[0], byte[1]), 16)
+                        else {
+                            log::error!("unable to parse pattern!");
+                            return None;
+                        };
+
+                        acc.push(Some(byte));
+                    }
+
+                    Some(acc)
+                })
+        }
+
+        fn parse_rust(mut pattern: String) -> Option<OwnedPattern> {
+            // 0xE9, _, _, _, _, 0x90, 0x9
+            pattern = pattern.replace(",", "");
+            pattern = pattern.replace("0x", "");
+            pattern = pattern.replace("_", "??");
+
+            parse_idatwo(pattern)
+        }
+
+        fn parse_cstr(pattern: String) -> Option<OwnedPattern> {
+            // "\xE9\x00\x00\x00\x90\x90" "x????xx"
+
+            let parts = pattern.split(" ").collect::<Vec<_>>();
+
+            if parts.len() != 2 {
+                log::error!("unable to parse pattern!");
+                return None;
+            }
+
+            let first_part = parts[0].trim().replace("\"", "");
+
+            let first_part = first_part
+                .split("\\x")
+                .into_iter()
+                .map(|x| {
+                    if x == "" || x.len() < 2 {
+                        vec![]
+                    } else {
+                        let byte = &x[..2];
+                        let wildcards = x.len() - 2;
+
+                        let wildcards = (0..wildcards)
+                            .into_iter()
+                            .map(|_| None)
+                            .collect::<Vec<Option<u8>>>();
+
+                        let mut result = vec![u8::from_str_radix(&byte, 16)
+                            .map_err(|x| {
+                                log::error!("unable to parse pattern!");
+                                x
+                            })
+                            .ok()];
+
+                        result.extend(wildcards);
+
+                        result
+                    }
+                })
+                .flatten()
+                .collect::<Vec<_>>();
+
+            let second_part = parts[1].trim().replace("\"", "");
+
+            let mut pattern = OwnedPattern::new();
+
+            for (byte, mask) in first_part.iter().zip(second_part.chars()) {
+                match mask {
+                    'x' => {
+                        pattern.push(Some(byte.unwrap()));
+                    }
+                    '?' => {
+                        pattern.push(None);
+                    }
+                    _ => {
+                        log::error!("invalid char encountered!");
+                    }
+                }
+            }
+
+            Some(pattern)
+        }
+
+        match signature_type {
+            SignatureType::IDAOne => parse_idaone(pattern),
+            SignatureType::IDATwo => parse_idatwo(pattern),
+            SignatureType::Rust => parse_rust(pattern),
+            SignatureType::CStr => parse_cstr(pattern),
+        }
+    }
+}
+
 fn get_relocation_ranges(bv: &BinaryView) -> Vec<Range<u64>> {
     let mut count = 0usize;
     let ptr = unsafe {
@@ -184,29 +313,7 @@ fn get_relocation_ranges(bv: &BinaryView) -> Vec<Range<u64>> {
     ret
 }
 
-fn get_functions_at(bv: &BinaryView, addr: u64) -> Vec<Function> {
-    unsafe {
-        let mut count = 0usize;
-        let ptr = BNGetAnalysisFunctionsContainingAddress(
-            *std::mem::transmute::<_, *mut *mut BNBinaryView>(bv),
-            addr,
-            &mut count as *mut usize,
-        );
-
-        let funcs = std::slice::from_raw_parts(ptr, count);
-
-        let funcs = funcs.to_vec();
-
-        BNFreeFunctionList(ptr, count);
-
-        funcs
-            .into_iter()
-            .map(|func| std::mem::transmute::<_, Function>(func))
-            .collect()
-    }
-}
-
-fn get_code(bv: &BinaryView) -> Vec<(usize, Vec<u8>)> {
+fn get_code(bv: &BinaryView) -> Vec<(u64, Vec<u8>)> {
     bv.segments()
         .into_iter()
         .filter(|segment| segment.executable() || segment.contains_code())
@@ -215,31 +322,31 @@ fn get_code(bv: &BinaryView) -> Vec<(usize, Vec<u8>)> {
             let len = range.end.checked_sub(range.start);
 
             let Some(len) = len else {
-				return (range.start as usize, Vec::new());
-			};
+                return (range.start, Vec::new());
+            };
 
             if len == 0 {
-                return (range.start as usize, Vec::new());
+                return (range.start, Vec::new());
             }
 
             let mut data = vec![0u8; len as usize];
 
             bv.read(&mut data, range.start);
 
-            (range.start as usize, data)
+            (range.start, data)
         })
         .collect()
 }
 
 fn get_instruction_pattern(
     bv: &BinaryView,
-    start_addr: usize,
+    start_addr: u64,
     instr: &Instruction,
     offsets: &ConstantOffsets,
     buf: &[u8],
     relocations: &[Range<u64>],
     include_operands: bool,
-) -> Option<OwnedPattern> {
+) -> Result<OwnedPattern, SignatureError> {
     let mut pattern = buf.into_iter().map(|x| Some(*x)).collect::<OwnedPattern>();
 
     #[allow(unused_parens)]
@@ -249,8 +356,7 @@ fn get_instruction_pattern(
             (DeclareByte | DeclareWord | DeclareDword | DeclareQword)
         )
     {
-        log::warn!("invalid instruction encountered!");
-        return None;
+        Err(SignatureError::InvalidInstruction)?
     }
 
     #[allow(unused_parens)]
@@ -317,6 +423,7 @@ fn get_instruction_pattern(
         }
     }
 
+    let start_addr = start_addr as usize;
     for relocation in relocations {
         if (start_addr..(start_addr + instr.len())).contains(&(relocation.start as usize)) {
             let start_offset = relocation.start as usize - start_addr;
@@ -327,43 +434,31 @@ fn get_instruction_pattern(
         }
     }
 
-    Some(pattern)
+    Ok(pattern)
 }
 
 fn find_patterns<'a>(
-    code_segments: &'a [(usize, Vec<u8>)],
+    code_segments: &'a [(u64, Vec<u8>)],
     pattern: Pattern<'a>,
-) -> impl ParallelIterator<Item = usize> + 'a {
-    fn find_patterns_internal_par<'a>(
+) -> impl ParallelIterator<Item = u64> + 'a {
+    fn find_patterns_internal<'a>(
         region: &'a [u8],
         pattern: Pattern<'a>,
-    ) -> impl ParallelIterator<Item = usize> + 'a {
-        #[inline(always)]
-        fn match_pattern(window: &[u8], pattern: Pattern) -> bool {
-            window.iter().zip(pattern).all(|(v, p)| match p {
-                Some(x) => *v == *x,
-                None => true,
-            })
-        }
-
-        region
-            .par_windows(pattern.len())
-            .enumerate()
-            .filter(|(_, wnd)| core::intrinsics::unlikely(match_pattern(wnd, pattern)))
-            .map(|(idx, _)| idx)
+    ) -> impl Iterator<Item = usize> + 'a {
+        PatternSearcher::new(region, pattern)
     }
-
-    let pattern = pattern.clone();
 
     code_segments
         .par_iter()
         .map(|segment| {
-            find_patterns_internal_par(&segment.1, pattern).map(|x| x + segment.0 as usize)
+            find_patterns_internal(&segment.1, pattern)
+                .map(|x| x as u64 + segment.0)
+                .par_bridge()
         })
         .flatten()
 }
 
-fn is_pattern_unique(code_segments: &[(usize, Vec<u8>)], pattern: Pattern) -> bool {
+fn is_pattern_unique(code_segments: &[(u64, Vec<u8>)], pattern: Pattern) -> bool {
     let iter = find_patterns(code_segments, pattern);
 
     let count = AtomicUsize::new(0);
@@ -377,10 +472,10 @@ fn is_pattern_unique(code_segments: &[(usize, Vec<u8>)], pattern: Pattern) -> bo
 
 fn create_pattern_internal(
     bv: &BinaryView,
-    addr: usize,
-    data: &[(usize, Vec<u8>)],
+    addr: u64,
+    data: &[(u64, Vec<u8>)],
     include_operands: bool,
-) -> Option<OwnedPattern> {
+) -> Result<OwnedPattern, SignatureError> {
     log::info!("creating pattern for address {:#04X}", addr);
     let time = SystemTime::now();
 
@@ -389,47 +484,47 @@ fn create_pattern_internal(
 
     let relocations = get_relocation_ranges(bv);
 
-    let mut current_offset = 0usize;
-    let mut current_buffer = vec![0u8; MAX_INSTRUCTION_LENGTH];
+    let mut current_offset = 0u64;
+    let mut current_buffer = vec![0u8; MAX_INSTRUCTION_LENGTH as usize];
     let mut current_pattern = OwnedPattern::default();
     let mut pattern_unique = false;
-    let max_size = get_maximum_signature_size(bv) as usize;
+    let max_size = get_maximum_signature_size(bv);
 
     while !pattern_unique {
         if current_offset >= max_size {
-            log::warn!("pattern isn't unique even at maximum size. aborting.");
-            return None;
+            Err(SignatureError::NotUnique(max_size))?
         }
 
         let Some(start_segment) = bv.segment_at(addr as u64) else {
-			log::warn!("unable to query instruction segment");
-			return None;
-		};
+            Err(SignatureError::InvalidSegment)?
+        };
 
-        let instr_len: usize = bv
+        let instr_len = bv
             .default_arch()
             .map(|arch| {
                 bv.instruction_len(&arch, addr as u64 - start_segment.address_range().start)
+                    .map(|x| x as u64)
             })
             .flatten()
             .unwrap_or(MAX_INSTRUCTION_LENGTH);
 
-        if bv.default_platform().is_some_and(|x| {
-            bv.function_at(&*x, addr as u64).is_ok_and(|lhs| {
-                bv.function_at(&*x, (addr + current_offset + instr_len) as u64)
-                    .is_ok_and(|rhs| lhs.start() == rhs.start())
+        // check that we are not crossing function boundaries
+        // the range we were in at the start is still the same range as we are currently scanning
+        if !bv.functions_containing(addr as u64).iter().any(|func| {
+            func.address_ranges().iter().any(|range| {
+                range.start() <= addr as u64
+                    && range.end() >= (addr + current_offset + instr_len) as u64
             })
         }) {
-            log::warn!("pattern is not unique yet, but continuing would access invalid memory.");
-            return None;
+            Err(SignatureError::OutOfBounds)?
         }
 
         current_buffer.copy_from_slice(
             &data
                 .iter()
-                .find(|segment| segment.0 == start_segment.address_range().start as usize)?
-                .1[addr + current_offset - start_segment.address_range().start as usize
-                ..addr + current_offset + instr_len - start_segment.address_range().start as usize],
+                .find(|segment| segment.0 == start_segment.address_range().start).ok_or(SignatureError::InvalidSegment)?
+                .1[(addr + current_offset - start_segment.address_range().start) as usize
+                ..(addr + current_offset + instr_len - start_segment.address_range().start) as usize],
         );
 
         let mut decoder = iced_x86::Decoder::new(
@@ -450,17 +545,26 @@ fn create_pattern_internal(
         let mut instr_string = String::new();
         formatter.format(&instr, &mut instr_string);
 
-        let Some(instr_pattern) = get_instruction_pattern(bv, addr + current_offset, &instr, &offsets, instr_bytes, &relocations, include_operands) else {
-			log::warn!("unable to get instruction pattern. instruction misaligned?");
-			return None;
-		};
+        let instr_pattern = get_instruction_pattern(
+            bv,
+            addr + current_offset,
+            &instr,
+            &offsets,
+            instr_bytes,
+            &relocations,
+            include_operands,
+        )?;
 
         #[cfg(debug_assertions)]
-        log::info!("{}: {}", instr_string, RustPattern(&instr_pattern));
+        log::info!(
+            "{}: {}",
+            instr_string,
+            RustPattern(Cow::Borrowed(&instr_pattern))
+        );
 
         current_pattern.extend(&instr_pattern);
 
-        current_offset += instr.len();
+        current_offset += instr.len() as u64;
         pattern_unique = is_pattern_unique(&data, &current_pattern);
     }
 
@@ -469,37 +573,23 @@ fn create_pattern_internal(
 	}
 
     log::info!(
-        "found pattern in {}ms",
+        "created pattern in {}ms",
         SystemTime::now().duration_since(time).unwrap().as_millis()
     );
 
-    Some(current_pattern)
+    Ok(current_pattern)
 }
 
-fn create_pattern(bv: &BinaryView, addr: usize) -> Option<OwnedPattern> {
+fn create_pattern(bv: &BinaryView, addr: u64) -> Result<OwnedPattern, SignatureError> {
     let include_operands = get_include_operands(bv);
     let data = get_code(bv);
     let pattern = create_pattern_internal(bv, addr, &data, include_operands);
 
-    if !include_operands && pattern.is_none() {
+    if !include_operands && matches!(pattern, Err(SignatureError::NotUnique(_))) {
         log::warn!("unable to find a unique pattern that didn't include operands. trying again with operands!");
         create_pattern_internal(bv, addr, &data, true)
     } else {
         pattern
-    }
-}
-
-fn is_valid(bv: &BinaryView, range: Range<u64>) -> bool {
-    // range is nonzero
-    // if bv.functions().iter().any(|func| {
-    //     func.address_ranges()
-    //         .into_iter()
-    //         .any(|func_range| (func_range.start()..func_range.end()).contains(&range.start))
-    // }) {
-    if !get_functions_at(bv, range.start).is_empty() {
-        true
-    } else {
-        false
     }
 }
 
@@ -513,9 +603,7 @@ fn emit_result(contents: String) {
 fn set_clipboard_contents(contents: String) -> Result<(), Box<dyn std::error::Error>> {
     let mut ctx: clipboard::ClipboardContext = clipboard::ClipboardProvider::new()?;
 
-    ctx.set_contents(contents)?;
-
-    Ok(())
+    ctx.set_contents(contents)
 }
 
 fn get_clipboard_contents() -> Result<String, Box<dyn std::error::Error>> {
@@ -525,71 +613,26 @@ fn get_clipboard_contents() -> Result<String, Box<dyn std::error::Error>> {
 }
 
 fn get_maximum_signature_size(bv: &BinaryView) -> u64 {
-    let schema_id = CString::new("default").unwrap();
-    let key = CString::new("coolsigmaker.maximum_size").unwrap();
-    let settings = unsafe { BNCreateSettings(schema_id.as_ptr()) };
-
-    let ret = unsafe {
-        BNSettingsGetUInt64(
-            settings,
-            key.as_ptr(),
-            *std::mem::transmute::<_, *mut *mut BNBinaryView>(bv),
-            std::ptr::null_mut(),
-        )
-    };
-
-    unsafe { BNFreeSettings(settings) };
-
-    ret
+    Settings::new("default").get_integer("coolsigmaker.maximum_size", Some(bv), None)
 }
 
 fn get_include_operands(bv: &BinaryView) -> bool {
-    let schema_id = CString::new("default").unwrap();
-    let key = CString::new("coolsigmaker.include_operands").unwrap();
-    let settings = unsafe { BNCreateSettings(schema_id.as_ptr()) };
-
-    let ret = unsafe {
-        BNSettingsGetBool(
-            settings,
-            key.as_ptr(),
-            *std::mem::transmute::<_, *mut *mut BNBinaryView>(bv),
-            std::ptr::null_mut(),
-        )
-    };
-
-    unsafe { BNFreeSettings(settings) };
-
-    ret
+    Settings::new("default").get_bool("coolsigmaker.include_operands", Some(bv), None)
 }
 
 fn get_signature_type(bv: &BinaryView) -> SignatureType {
-    let schema_id = CString::new("default").unwrap();
-    let key = CString::new("coolsigmaker.sig_type").unwrap();
-    let settings = unsafe { BNCreateSettings(schema_id.as_ptr()) };
-
-    let ret = unsafe {
-        BNSettingsGetString(
-            settings,
-            key.as_ptr(),
-            *std::mem::transmute::<_, *mut *mut BNBinaryView>(bv),
-            std::ptr::null_mut(),
-        )
-    };
-
-    let string = unsafe { CStr::from_ptr(ret) };
-
-    let sig_type = SignatureType::from_str(&string.to_string_lossy()).unwrap();
-
-    unsafe { BNFreeString(ret) };
-
-    unsafe { BNFreeSettings(settings) };
-
-    sig_type
+    SignatureType::from_str(
+        Settings::new("default")
+            .get_string("coolsigmaker.sig_type", Some(bv), None)
+            .as_str(),
+    )
+    .map_err(|_| log::error!("invalid value for coolsigmaker.sig_type! falling back to default!"))
+    .unwrap_or(SignatureType::IDATwo)
 }
 
 fn register_settings() {
     fn register_setting<T>(
-        settings: *mut BNSettings,
+        settings: &Settings,
         name: &str,
         title: &str,
         description: &str,
@@ -598,8 +641,6 @@ fn register_settings() {
     ) where
         T: core::fmt::Display,
     {
-        let name = CString::new(name).unwrap();
-
         let default = if typ == "string" {
             format!("\"{}\"", default)
         } else {
@@ -618,21 +659,13 @@ fn register_settings() {
 		"#
         );
 
-        let properties = CString::new(properties).unwrap();
-
-        unsafe { BNSettingsRegisterSetting(settings, name.as_ptr(), properties.as_ptr()) };
+        settings.register_setting_json(name, properties);
     }
 
-    fn register_enum_setting<T>(
-        settings: *mut BNSettings,
-        name: &str,
-        title: &str,
-        description: &str,
-    ) where
+    fn register_enum_setting<T>(settings: &Settings, name: &str, title: &str, description: &str)
+    where
         T: Display + EnumMessage + VariantNames + IntoEnumIterator + Default,
     {
-        let name = CString::new(name).unwrap();
-
         let enum_variants = T::VARIANTS;
         let enum_descriptions = T::iter()
             .map(|x| x.get_message().unwrap_or(""))
@@ -655,22 +688,17 @@ fn register_settings() {
             serde_json::to_string(&enum_descriptions).unwrap()
         );
 
-        let properties = CString::new(properties).unwrap();
-
-        unsafe { BNSettingsRegisterSetting(settings, name.as_ptr(), properties.as_ptr()) };
+        settings.register_setting_json(name, properties);
     }
 
-    let schema_id = CString::new("default").unwrap();
-    let group = CString::new("coolsigmaker").unwrap();
-    let group_fancy = CString::new("CoolSigMaker").unwrap();
-    let settings = unsafe { BNCreateSettings(schema_id.as_ptr()) };
+    let settings = Settings::new("default");
 
-    unsafe { BNSettingsRegisterGroup(settings, group.as_ptr(), group_fancy.as_ptr()) };
+    settings.register_group("coolsigmaker", "CoolSigMaker");
 
-    register_setting::<bool>(settings, "coolsigmaker.include_operands", "Include Operands", "Include immediate operands that aren't memory-relative or relocated when creating signatures. This results in smaller, but potentially more fragile, signatures. If no unique signature can be generated without operands, we fall back to including them.", "boolean", true);
+    register_setting::<bool>(&settings, "coolsigmaker.include_operands", "Include Operands", "Include immediate operands that aren't memory-relative or relocated when creating signatures. This results in smaller, but potentially more fragile, signatures. If no unique signature can be generated without operands, we fall back to including them.", "boolean", true);
 
     register_setting::<u64>(
-        settings,
+        &settings,
         "coolsigmaker.maximum_size",
         "Maximum Signature Size",
         "The maximum size the signature will accumulate before giving up.",
@@ -679,205 +707,93 @@ fn register_settings() {
     );
 
     register_enum_setting::<SignatureType>(
-        settings,
+        &settings,
         "coolsigmaker.sig_type",
         "Signature Type",
         "The signature type to use for creating and finding signatures",
     );
-
-    unsafe { BNFreeSettings(settings) };
-}
-
-fn prepare_pattern(pattern: &str) -> String {
-    let mut pattern = pattern.to_string();
-    pattern = pattern.replace("\n", "");
-    pattern = pattern.replace("\r", "");
-    pattern = pattern.replace("\t", "");
-    pattern = pattern.trim().to_string();
-
-    pattern
-}
-
-fn parse_idaone_pattern(pattern: &str) -> Option<OwnedPattern> {
-    // E9 ? ? ? ? 90 90
-    let mut pattern = prepare_pattern(pattern);
-
-    pattern = pattern.replace("?", "??");
-    parse_idatwo_pattern(&pattern)
-}
-
-fn parse_idatwo_pattern(pattern: &str) -> Option<OwnedPattern> {
-    // E9 ?? ?? ?? ?? 90 90
-    let mut pattern = prepare_pattern(pattern);
-    pattern = pattern.replace(" ", "");
-
-    pattern
-        .chars()
-        .array_chunks::<2>()
-        .try_fold(OwnedPattern::new(), |mut acc, byte| {
-            if byte == ['?', '?'] {
-                acc.push(None);
-            } else {
-                let Ok(byte) = u8::from_str_radix(
-				&format!("{}{}", byte[0], byte[1]),
-				16,
-			) else {
-				log::error!("unable to parse pattern!");
-				return None;
-			};
-
-                acc.push(Some(byte));
-            }
-
-            Some(acc)
-        })
-}
-
-fn parse_rust_pattern(pattern: &str) -> Option<OwnedPattern> {
-    // 0xE9, _, _, _, _, 0x90, 0x90
-    let mut pattern = prepare_pattern(pattern);
-
-    pattern = pattern.replace(",", "");
-    pattern = pattern.replace("0x", "");
-    pattern = pattern.replace("_", "??");
-
-    parse_idatwo_pattern(&pattern)
-}
-
-fn parse_cstr_pattern(pattern: &str) -> Option<OwnedPattern> {
-    // "\xE9\x00\x00\x00\x90\x90" "x????xx"
-    let pattern = prepare_pattern(pattern);
-
-    let parts = pattern.split(" ").collect::<Vec<_>>();
-
-    if parts.len() != 2 {
-        log::error!("unable to parse pattern!");
-        return None;
-    }
-
-    let first_part = parts[0].trim().replace("\"", "");
-
-    let first_part = first_part
-        .split("\\x")
-        .into_iter()
-        .map(|x| {
-            if x == "" || x.len() < 2 {
-                vec![]
-            } else {
-                let byte = &x[..2];
-                let wildcards = x.len() - 2;
-
-                let wildcards = (0..wildcards)
-                    .into_iter()
-                    .map(|_| None)
-                    .collect::<Vec<Option<u8>>>();
-
-                let mut result = vec![u8::from_str_radix(&byte, 16)
-                    .map_err(|x| {
-                        log::error!("unable to parse pattern!");
-                        x
-                    })
-                    .ok()];
-
-                result.extend(wildcards);
-
-                result
-            }
-        })
-        .flatten()
-        .collect::<Vec<_>>();
-
-    let second_part = parts[1].trim().replace("\"", "");
-
-    let mut pattern = OwnedPattern::new();
-
-    for (byte, mask) in first_part.iter().zip(second_part.chars()) {
-        match mask {
-            'x' => {
-                pattern.push(Some(byte.unwrap()));
-            }
-            '?' => {
-                pattern.push(None);
-            }
-            _ => {
-                log::error!("invalid char encountered!");
-            }
-        }
-    }
-
-    Some(pattern)
 }
 
 #[test]
 fn test_patterns() {
-    let test_pattern = &[Some(0xE9), None, None, None, None, Some(0x90), Some(0x90)];
+    // .clone() code smell..... but this eliminates calling .unwrap() and then comparing by reference, whatever.
+    let test_pattern = vec![Some(0xE9), None, None, None, None, Some(0x90), Some(0x90)];
+
     assert_eq!(
-        &parse_idaone_pattern("E9 ? ? ? ? 90 90").unwrap(),
-        test_pattern
+        OwnedPattern::from_signature(String::from("E9 ? ? ? ? 90 90"), SignatureType::IDAOne),
+        Some(test_pattern.clone())
     );
+
     assert_eq!(
-        &parse_idatwo_pattern("E9 ?? ?? ?? ?? 90 90").unwrap(),
-        test_pattern
+        OwnedPattern::from_signature(String::from("E9 ?? ?? ?? ?? 90 90"), SignatureType::IDATwo),
+        Some(test_pattern.clone())
     );
+
     assert_eq!(
-        &parse_rust_pattern("0xE9, _, _, _, _, 0x90, 0x90").unwrap(),
-        test_pattern
+        OwnedPattern::from_signature(
+            String::from("0xE9, _, _, _, _, 0x90, 0x90"),
+            SignatureType::Rust
+        ),
+        Some(test_pattern.clone())
     );
+
     assert_eq!(
-        &parse_cstr_pattern(r#""\xE9\x00??\x00\x90\x90" "x????xx""#).unwrap(),
-        test_pattern
+        OwnedPattern::from_signature(
+            String::from(r#""\xE9\x00??\x00\x90\x90" "x????xx""#),
+            SignatureType::CStr
+        ),
+        Some(test_pattern.clone())
     );
 }
 
 impl AddressCommand for SigMakerCommand {
     fn action(&self, bv: &BinaryView, addr: u64) {
-        if let Some(pattern) = create_pattern(bv, addr as _) {
-            let pattern: Box<dyn core::fmt::Display> = match get_signature_type(bv) {
-                SignatureType::IDAOne => Box::new(IDAOnePattern(&pattern)),
-                SignatureType::IDATwo => Box::new(IDATwoPattern(&pattern)),
-                SignatureType::Rust => Box::new(RustPattern(&pattern)),
-                SignatureType::CStr => Box::new(CStrPattern(&pattern)),
-            };
-            emit_result(format!("{}", pattern));
-        } else {
-            log::error!("unable to create pattern!");
+        match create_pattern(bv, addr as _) {
+            Ok(pattern) => {
+                let pattern: Box<dyn core::fmt::Display> = match get_signature_type(bv) {
+                    SignatureType::IDAOne => Box::new(IDAOnePattern(Cow::Owned(pattern))),
+                    SignatureType::IDATwo => Box::new(IDATwoPattern(Cow::Owned(pattern))),
+                    SignatureType::Rust => Box::new(RustPattern(Cow::Owned(pattern))),
+                    SignatureType::CStr => Box::new(CStrPattern(Cow::Owned(pattern))),
+                };
+
+                emit_result(format!("{}", pattern));
+            }
+            Err(e) => {
+                log::error!("unable to create pattern! {e}");
+            }
         }
     }
 
     fn valid(&self, bv: &BinaryView, addr: u64) -> bool {
-        is_valid(
-            bv,
-            Range {
-                start: addr,
-                end: addr + MAX_INSTRUCTION_LENGTH as u64,
-            },
-        )
+        // there is a function at the specified address. the pattern creation code will make sure we stay within a valid function.
+        !bv.functions_containing(addr).is_empty()
     }
 }
 
 impl Command for SigFinderCommand {
     fn action(&self, bv: &BinaryView) {
         let Ok(sig) = get_clipboard_contents() else {
-			log::error!("unable to get signature from clipboard!");
-			return;
-		};
+            log::error!("unable to get signature from clipboard!");
+            return;
+        };
+
+        let time = SystemTime::now();
 
         let data = get_code(bv);
 
-        let Some(pattern) = (match get_signature_type(bv) {
-            SignatureType::IDAOne => parse_idaone_pattern(&sig),
-            SignatureType::IDATwo => parse_idatwo_pattern(&sig),
-            SignatureType::Rust => parse_rust_pattern(&sig),
-            SignatureType::CStr => parse_cstr_pattern(&sig),
-        }) else {
-			log::error!("failed to parse pattern.");
-			return;
-		};
+        let Some(pattern) = OwnedPattern::from_signature(sig, get_signature_type(bv)) else {
+            log::error!("failed to parse pattern.");
+            return;
+        };
 
         find_patterns(&data, &pattern)
             .for_each(|occurrence| log::info!("found signature at {:#04X}", occurrence));
 
-        log::info!("scan finished.");
+        log::info!(
+            "scan finished in {}ms.",
+            SystemTime::now().duration_since(time).unwrap().as_millis()
+        );
     }
 
     fn valid(&self, _bv: &BinaryView) -> bool {
@@ -890,6 +806,9 @@ pub extern "C" fn CorePluginInit() -> bool {
     binaryninja::logger::init(log::LevelFilter::Info).unwrap();
 
     // TODO: (maybe) if signature not found, maybe go back a few instructions and attempt to create a signature with an offset.
+    // TODO: introduce a setting for "dumb" searches, where we also search non-executable segments for uniqueness, incase the user doesn't want to check the segments before scanning them.
+    // TODO: smarter signature creation akin to a binary search. narrow down a unique size instead of trying again and again until it's unique.
+    // TODO: make a fancy regex to distinguish signature types automagically (without accidental mismatches occurring)
 
     log::info!("binja_coolsigmaker by unknowntrojan loaded!");
     log::info!("say hello to the little ninja in your binja");
