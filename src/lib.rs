@@ -519,7 +519,7 @@ fn create_pattern_internal(
             Err(SignatureError::OutOfBounds)?
         }
 
-        current_buffer.copy_from_slice(
+        current_buffer[..instr_len as _].copy_from_slice(
             &data
                 .iter()
                 .find(|segment| segment.0 == start_segment.address_range().start).ok_or(SignatureError::InvalidSegment)?
@@ -823,7 +823,7 @@ pub extern "C" fn CorePluginInit() -> bool {
         );
 
         // #[cfg(debug_assertions)]
-        let _ = std::fs::write("C:\\log.txt", &string);
+        let _ = std::fs::write("E:\\log.txt", &string);
 
         log::info!("{}", &string);
     }));
