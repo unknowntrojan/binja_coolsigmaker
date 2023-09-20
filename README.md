@@ -14,11 +14,11 @@ To find a signature, copy the signature to your clipboard in the format you sele
 
 These are the settings:
 
-![settings](https://i.imgur.com/BK4Q0E5.png)
+![settings](settings.png)
 
 This is how it looks to create a signature, then scan for it:
 
-![pattern creation and scanning](https://i.imgur.com/qkjdU2M.png)
+![pattern creation and scanning](sig.png)
 
 ## How to install
 
