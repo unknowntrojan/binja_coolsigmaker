@@ -31,8 +31,8 @@ jobs:
         env:
           BN_SERIAL: ${{ secrets.BN_SERIAL }}
         run: |
-          apt -y update
-          apt -y install llvm-dev libclang-dev clang llvm-dev libxcb-shape0-dev libxcb-xfixes0-dev build-essential binutils-aarch64-linux-gnu
+          sudo apt -y update
+          sudo apt -y install llvm-dev libclang-dev clang llvm-dev libxcb-shape0-dev libxcb-xfixes0-dev build-essential binutils-aarch64-linux-gnu
           wget https://raw.githubusercontent.com/Vector35/binaryninja-api/dev/scripts/download_headless.py
           python3 -m pip install requests
           python3 download_headless.py --serial "$BN_SERIAL" --dev --install --clean --dir /tmp/binja-dev
