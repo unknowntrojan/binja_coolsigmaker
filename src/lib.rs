@@ -875,7 +875,7 @@ fn register_settings() {
 
     settings.register_group("coolsigmaker", "CoolSigMaker");
 
-    register_setting::<bool>(&settings, "coolsigmaker.include_operands", "Include Operands", "Include immediate operands that aren't memory-relative or relocated when creating signatures. This results in smaller, but potentially more fragile, signatures. If no unique signature can be generated without operands, we fall back to including them.", "boolean", true);
+    register_setting::<bool>(&settings, "coolsigmaker.include_operands", "Include Operands", "Include immediate operands that aren't memory-relative or relocated when creating signatures. This results in smaller, but potentially more fragile, signatures. If no unique signature can be generated without operands, we fall back to including them.", "boolean", false);
 
     register_setting::<bool>(&settings, "coolsigmaker.binary_search", "Use Binary Search", "Use a binary search to determine instruction uniqueness. For small binaries, this will be slower than the default, while for bigger binaries it might be faster. It starts scanning at half the maximum signature size. There is no heuristic implemented to automatically determine this yet.", "boolean", false);
 
@@ -989,7 +989,6 @@ pub extern "C" fn CorePluginInit() -> bool {
 
     // TODO: (maybe) if signature not found, maybe go back a few instructions and attempt to create a signature with an offset.
     // TODO: introduce a setting for "dumb" searches, where we also search non-executable segments for uniqueness, incase the user doesn't want to check the segments before scanning them.
-    // TODO: smarter signature creation akin to a binary search. narrow down a unique size instead of trying again and again until it's unique.
     // TODO: make a fancy regex to distinguish signature types automagically (without accidental mismatches occurring)
 
     log::info!("binja_coolsigmaker by unknowntrojan loaded!");
