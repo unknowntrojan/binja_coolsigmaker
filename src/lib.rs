@@ -74,10 +74,8 @@ struct SigFinderCommand;
 
 #[derive(thiserror::Error, Debug)]
 enum SignatureError {
-    #[error("pattern is not unique even at maxmimum size of {0} bytes")]
+    #[error("pattern is not unique even at size of {0} bytes! we either hit the limit or would have broken a function boundary.")]
     NotUnique(u64),
-    #[error("pattern is not unique yet, but continuing would cross a function boundary")]
-    OutOfBounds,
     #[error("encountered an invalid instruction")]
     InvalidInstruction,
     #[error("unable to query instruction's segment")]
@@ -588,9 +586,13 @@ fn create_pattern_internal_binarysearch(
             }
         });
 
-    let instr = instr_offsets[unique_instr];
+    let instr = instr_offsets[unique_instr.clamp(0, instr_offsets.len() - 1)];
 
     current_pattern.drain(instr.0 as usize + instr.1..);
+
+    while let Some(x) = current_pattern.last() && x.is_none() {
+		current_pattern.pop();
+	}
 
     log::info!(
         "binsearch created pattern in {}ms",
@@ -743,12 +745,28 @@ fn create_pattern(bv: &BinaryView, addr: u64) -> Result<OwnedPattern, SignatureE
         create_pattern_internal(bv, addr, &data, include_operands)
     };
 
-    if !include_operands && matches!(pattern, Err(SignatureError::NotUnique(_))) {
+    let pattern = if !include_operands && matches!(pattern, Err(SignatureError::NotUnique(_))) {
         log::warn!("unable to find a unique pattern that didn't include operands. trying again with operands!");
-        create_pattern_internal(bv, addr, &data, true)
+        if get_binary_search(bv) {
+            create_pattern_internal_binarysearch(bv, addr, &data, true)
+        } else {
+            create_pattern_internal(bv, addr, &data, true)
+        }
     } else {
         pattern
+    };
+
+    if pattern
+        .as_ref()
+        .is_ok_and(|pat| !is_pattern_unique(&data, &pat))
+    {
+        log::error!("signature not unique, cannot proceed!");
+        return Err(SignatureError::NotUnique(
+            pattern.map_or(0u64, |pat| pat.len() as u64),
+        ));
     }
+
+    pattern
 }
 
 fn emit_result(contents: String) {
