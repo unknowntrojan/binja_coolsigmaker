@@ -27,6 +27,7 @@ use std::str::FromStr;
 use std::sync::atomic::AtomicUsize;
 use std::time::SystemTime;
 
+use binary_search::{binary_search, Direction};
 use binaryninja::settings::Settings;
 use binaryninja::{
     architecture::Architecture,
@@ -470,7 +471,7 @@ fn is_pattern_unique(code_segments: &[(u64, Vec<u8>)], pattern: Pattern) -> bool
     .is_none()
 }
 
-fn create_pattern_internal(
+fn create_pattern_internal_binarysearch(
     bv: &BinaryView,
     addr: u64,
     data: &[(u64, Vec<u8>)],
@@ -484,47 +485,38 @@ fn create_pattern_internal(
 
     let relocations = get_relocation_ranges(bv);
 
+    let max_size = get_maximum_signature_size(bv);
+
     let mut current_offset = 0u64;
     let mut current_buffer = vec![0u8; MAX_INSTRUCTION_LENGTH as usize];
     let mut current_pattern = OwnedPattern::default();
-    let mut pattern_unique = false;
-    let max_size = get_maximum_signature_size(bv);
+    let mut instr_offsets = vec![];
 
-    while !pattern_unique {
-        if current_offset >= max_size {
-            Err(SignatureError::NotUnique(max_size))?
-        }
+    let Some(start_segment) = bv.segment_at(addr as u64) else {
+        Err(SignatureError::InvalidSegment)?
+    };
 
-        let Some(start_segment) = bv.segment_at(addr as u64) else {
-            Err(SignatureError::InvalidSegment)?
-        };
+    let data_segment = data
+        .iter()
+        .find(|segment| segment.0 == start_segment.address_range().start)
+        .ok_or(SignatureError::InvalidSegment)?;
 
-        let instr_len = bv
-            .default_arch()
-            .map(|arch| {
-                bv.instruction_len(&arch, addr as u64 - start_segment.address_range().start)
-                    .map(|x| x as u64)
-            })
-            .flatten()
-            .unwrap_or(MAX_INSTRUCTION_LENGTH);
+    #[cfg(debug_assertions)]
+    log::info!("max sig size: {max_size}");
 
-        // check that we are not crossing function boundaries
-        // the range we were in at the start is still the same range as we are currently scanning
-        if !bv.functions_containing(addr as u64).iter().any(|func| {
-            func.address_ranges().iter().any(|range| {
-                range.start() <= addr as u64
-                    && range.end() >= (addr + current_offset + instr_len) as u64
-            })
-        }) {
-            Err(SignatureError::OutOfBounds)?
-        }
+    loop {
+        let instr_addr = addr + current_offset;
+        let instr_addr_rel = addr + current_offset - start_segment.address_range().start;
 
-        current_buffer[..instr_len as _].copy_from_slice(
-            &data
-                .iter()
-                .find(|segment| segment.0 == start_segment.address_range().start).ok_or(SignatureError::InvalidSegment)?
-                .1[(addr + current_offset - start_segment.address_range().start) as usize
-                ..(addr + current_offset + instr_len - start_segment.address_range().start) as usize],
+        let max_size = std::cmp::min(
+            max_size,
+            data_segment.1.len() as u64 - (instr_addr - data_segment.0),
+        );
+
+        current_buffer[..std::cmp::min(max_size, MAX_INSTRUCTION_LENGTH) as usize].copy_from_slice(
+            &data_segment.1[instr_addr_rel as usize
+                ..instr_addr_rel as usize
+                    + std::cmp::min(max_size, MAX_INSTRUCTION_LENGTH) as usize],
         );
 
         let mut decoder = iced_x86::Decoder::new(
@@ -562,6 +554,148 @@ fn create_pattern_internal(
             RustPattern(Cow::Borrowed(&instr_pattern))
         );
 
+        if current_offset + instr.len() as u64 >= max_size {
+            break;
+        }
+
+        // check that we are not crossing function boundaries
+        // the range we were in at the start is still the same range as we are currently scanning
+        if !bv.functions_containing(addr as u64).iter().any(|func| {
+            func.address_ranges().iter().any(|range| {
+                range.start() <= addr && range.end() >= (instr_addr + instr.len() as u64) as u64
+            })
+        }) {
+            break;
+        }
+
+        current_pattern.extend(&instr_pattern);
+        instr_offsets.push((current_offset, instr.len()));
+
+        current_offset += instr.len() as u64;
+    }
+
+    let ((_, _), (unique_instr, _)) =
+        binary_search((0, ()), (instr_offsets.len() as _, ()), |instr| {
+            let instr = instr_offsets[instr];
+            let pat = &current_pattern[0..instr.0 as usize + instr.1];
+
+            #[cfg(debug_assertions)]
+            log::info!("{}", RustPattern(Cow::Borrowed(&pat.to_vec())));
+
+            match is_pattern_unique(&data, pat) {
+                false => Direction::Low(()),
+                true => Direction::High(()),
+            }
+        });
+
+    let instr = instr_offsets[unique_instr];
+
+    current_pattern.drain(instr.0 as usize + instr.1..);
+
+    log::info!(
+        "binsearch created pattern in {}ms",
+        SystemTime::now().duration_since(time).unwrap().as_millis()
+    );
+
+    Ok(current_pattern)
+}
+
+fn create_pattern_internal(
+    bv: &BinaryView,
+    addr: u64,
+    data: &[(u64, Vec<u8>)],
+    include_operands: bool,
+) -> Result<OwnedPattern, SignatureError> {
+    log::info!("creating pattern for address {:#04X}", addr);
+    let time = SystemTime::now();
+
+    let mut formatter = NasmFormatter::new();
+    formatter.options_mut().set_rip_relative_addresses(true);
+
+    let relocations = get_relocation_ranges(bv);
+
+    let mut current_offset = 0u64;
+    let mut current_buffer = vec![0u8; MAX_INSTRUCTION_LENGTH as usize];
+    let mut current_pattern = OwnedPattern::default();
+    let mut pattern_unique = false;
+    let max_size = get_maximum_signature_size(bv);
+
+    let Some(start_segment) = bv.segment_at(addr as u64) else {
+        Err(SignatureError::InvalidSegment)?
+    };
+
+    let data_segment = data
+        .iter()
+        .find(|segment| segment.0 == start_segment.address_range().start)
+        .ok_or(SignatureError::InvalidSegment)?;
+
+    #[cfg(debug_assertions)]
+    log::info!("max sig size: {max_size}");
+
+    while !pattern_unique {
+        let instr_addr = addr + current_offset;
+        let instr_addr_rel = addr + current_offset - start_segment.address_range().start;
+
+        let max_size = std::cmp::min(
+            max_size,
+            data_segment.1.len() as u64 - (instr_addr - data_segment.0),
+        );
+
+        current_buffer[..std::cmp::min(max_size, MAX_INSTRUCTION_LENGTH) as usize].copy_from_slice(
+            &data_segment.1[instr_addr_rel as usize
+                ..instr_addr_rel as usize
+                    + std::cmp::min(max_size, MAX_INSTRUCTION_LENGTH) as usize],
+        );
+
+        let mut decoder = iced_x86::Decoder::new(
+            if let Some(arch) = bv.default_arch() {
+                (arch.address_size() * 8) as u32
+            } else {
+                64
+            },
+            &current_buffer,
+            0,
+        );
+        decoder.set_ip((addr + current_offset) as u64);
+
+        let instr = decoder.decode();
+        let offsets = decoder.get_constant_offsets(&instr);
+        let instr_bytes = &current_buffer[0..instr.len()];
+
+        let mut instr_string = String::new();
+        formatter.format(&instr, &mut instr_string);
+
+        let instr_pattern = get_instruction_pattern(
+            bv,
+            addr + current_offset,
+            &instr,
+            &offsets,
+            instr_bytes,
+            &relocations,
+            include_operands,
+        )?;
+
+        #[cfg(debug_assertions)]
+        log::info!(
+            "{}: {}",
+            instr_string,
+            RustPattern(Cow::Borrowed(&instr_pattern))
+        );
+
+        if current_offset + instr.len() as u64 >= max_size {
+            break;
+        }
+
+        // check that we are not crossing function boundaries
+        // the range we were in at the start is still the same range as we are currently scanning
+        if !bv.functions_containing(addr as u64).iter().any(|func| {
+            func.address_ranges().iter().any(|range| {
+                range.start() <= addr && range.end() >= (instr_addr + instr.len() as u64) as u64
+            })
+        }) {
+            break;
+        }
+
         current_pattern.extend(&instr_pattern);
 
         current_offset += instr.len() as u64;
@@ -583,7 +717,31 @@ fn create_pattern_internal(
 fn create_pattern(bv: &BinaryView, addr: u64) -> Result<OwnedPattern, SignatureError> {
     let include_operands = get_include_operands(bv);
     let data = get_code(bv);
-    let pattern = create_pattern_internal(bv, addr, &data, include_operands);
+
+    #[cfg(debug_assertions)]
+    {
+        let pattern = create_pattern_internal(bv, addr, &data, include_operands);
+        let binsearch_pattern =
+            create_pattern_internal_binarysearch(bv, addr, &data, include_operands);
+
+        let _ = pattern
+            .as_ref()
+            .map(|pat| log::info!("{}", RustPattern(Cow::Borrowed(&pat))));
+
+        let _ = binsearch_pattern
+            .as_ref()
+            .map(|pat| log::info!("{}", RustPattern(Cow::Borrowed(&pat))));
+
+        if pattern.as_ref().unwrap() != binsearch_pattern.as_ref().unwrap() {
+            log::error!("patterns dont match :(((");
+        }
+    }
+
+    let pattern = if get_binary_search(bv) {
+        create_pattern_internal_binarysearch(bv, addr, &data, include_operands)
+    } else {
+        create_pattern_internal(bv, addr, &data, include_operands)
+    };
 
     if !include_operands && matches!(pattern, Err(SignatureError::NotUnique(_))) {
         log::warn!("unable to find a unique pattern that didn't include operands. trying again with operands!");
@@ -618,6 +776,10 @@ fn get_maximum_signature_size(bv: &BinaryView) -> u64 {
 
 fn get_include_operands(bv: &BinaryView) -> bool {
     Settings::new("default").get_bool("coolsigmaker.include_operands", Some(bv), None)
+}
+
+fn get_binary_search(bv: &BinaryView) -> bool {
+    Settings::new("default").get_bool("coolsigmaker.binary_search", Some(bv), None)
 }
 
 fn get_signature_type(bv: &BinaryView) -> SignatureType {
@@ -696,6 +858,8 @@ fn register_settings() {
     settings.register_group("coolsigmaker", "CoolSigMaker");
 
     register_setting::<bool>(&settings, "coolsigmaker.include_operands", "Include Operands", "Include immediate operands that aren't memory-relative or relocated when creating signatures. This results in smaller, but potentially more fragile, signatures. If no unique signature can be generated without operands, we fall back to including them.", "boolean", true);
+
+    register_setting::<bool>(&settings, "coolsigmaker.binary_search", "Use Binary Search", "Use a binary search to determine instruction uniqueness. For small binaries, this will be slower than the default, while for bigger binaries it might be faster. It starts scanning at half the maximum signature size. There is no heuristic implemented to automatically determine this yet.", "boolean", false);
 
     register_setting::<u64>(
         &settings,
