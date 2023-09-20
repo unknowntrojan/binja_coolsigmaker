@@ -31,6 +31,4 @@ Once GitHub Actions are set up and a loader plugin has been written, you will be
 
 This project requires the nightly channel of Rust.
 
-Check the Cargo.toml file and adjust the `binaryninja` dependency so it points to whatever Binja update channel you want to compile for. __!MAKE SURE!__ Cargo caught your change of branch. It sometimes doesn't realize you changed it. Delete `Cargo.lock` and/or run `cargo clean`. Otherwise, it'll keep using whatever version was selected when you built or rust-analyzer ran.
-
-The Stable tag needs to be updated periodically, there is no "newest-stable" tag.
+Check the Cargo.toml file and adjust the `binaryninja` dependency so it points to whatever Binja update channel you want to compile for. __!MAKE SURE!__ Cargo caught your change of branch. It sometimes doesn't realize you changed it. Delete `Cargo.lock` to make Cargo realize you did. Otherwise, it'll keep using whatever version was selected when you built or rust-analyzer ran.

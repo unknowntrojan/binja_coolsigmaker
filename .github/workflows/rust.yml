@@ -1,0 +1,102 @@
+name: Rust
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+    branches: ["master"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: nightly
+            profile: minimal
+            override: true
+
+      - name: Install targets
+        run: |
+          rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
+
+      - name: Install Binja
+        env:
+          BN_SERIAL: ${{ secrets.BN_SERIAL }}
+        run: |
+          apt -y update
+          apt -y install llvm-dev libclang-dev clang llvm-dev libxcb-shape0-dev libxcb-xfixes0-dev build-essential binutils-aarch64-linux-gnu
+          wget https://raw.githubusercontent.com/Vector35/binaryninja-api/dev/scripts/download_headless.py
+          python3 -m pip install requests
+          python3 download_headless.py --serial "$BN_SERIAL" --dev --install --clean --dir /tmp/binja-dev
+          python3 download_headless.py --serial "$BN_SERIAL" --install --clean --dir /tmp/binja-stable
+
+      - name: Install Binja Stable API
+        run: |
+          bash /tmp/binja-stable/binaryninja/scripts/linux-setup.sh -s
+          python3 /tmp/binja-stable/binaryninja/scripts/install_api.py
+
+      - name: Build Stable - Linux x64
+        run: cargo build --release --target x86_64-unknown-linux-gnu && mv target/x86_64-unknown-linux-gnu/release/libbinja_coolsigmaker.so libbinja_coolsigmaker_linux_x64_stable.so
+
+      # - name: Build Stable - Linux aarch64
+      #   env:
+      #     RUSTFLAGS: "-C target-feature=+neon"
+      #     CC: clang --target aarch64-unknown-linux-gnu
+      #     CXX: clang++ --target aarch64-unknown-linux-gnu
+      #   run: cargo build --release --target aarch64-unknown-linux-gnu && mv target/aarch64-unknown-linux-gnu/release/libbinja_coolsigmaker.so libbinja_coolsigmaker_linux_aarch64_stable.so
+        
+
+      - name: Install Binja Dev API
+        run: |
+          bash /tmp/binja-dev/binaryninja/scripts/linux-setup.sh -s
+          python3 /tmp/binja-dev/binaryninja/scripts/install_api.py
+
+      - name: Build Dev - Linux x64
+        run: cargo build --release --target x86_64-unknown-linux-gnu --config 'patch."https://github.com/Vector35/binaryninja-api".binaryninja.git="https://github.com/Vector35/binaryninja-api?branch=dev"' && mv target/x86_64-unknown-linux-gnu/release/libbinja_coolsigmaker.so libbinja_coolsigmaker_linux_x64_dev.so
+
+      # - name: Build Dev - Linux aarch64
+      #   env:
+      #     RUSTFLAGS: "-C target-feature=+neon"
+      #     CC: clang --target aarch64-unknown-linux-gnu
+      #     CXX: clang++ --target aarch64-unknown-linux-gnu
+      #   run: cargo build --release --target aarch64-unknown-linux-gnu --config 'patch."https://github.com/Vector35/binaryninja-api".binaryninja.git="https://github.com/Vector35/binaryninja-api?branch=dev"' && mv target/aarch64-unknown-linux-gnu/release/libbinja_coolsigmaker.so libbinja_coolsigmaker_linux_aarch64_dev.so
+
+
+      # - name: Build Dev - Mac x64
+      #   run: cargo build --release --target x86_64-apple-darwin --config 'patch."https://github.com/Vector35/binaryninja-api".binaryninja.git="https://github.com/Vector35/binaryninja-api?branch=dev"' && mv target/release/libbinja_coolsigmaker.so libbinja_coolsigmaker_mac_x64_dev.so
+
+      # - name: Build Stable - Mac x64
+      #   run: cargo build --release --target x86_64-apple-darwin && mv target/release/libbinja_coolsigmaker.so libbinja_coolsigmaker_mac_x64_stable.so
+        
+
+      # - name: Build Dev - Mac aarch64
+      #   run: cargo build --release --target aarch64-apple-darwin --config 'patch."https://github.com/Vector35/binaryninja-api".binaryninja.git="https://github.com/Vector35/binaryninja-api?branch=dev"' && mv target/release/libbinja_coolsigmaker.so libbinja_coolsigmaker_mac_aarch64_dev.so
+
+      # - name: Build Stable - Mac aarch64
+      #   run: cargo build --release --target aarch64-apple-darwin && mv target/release/libbinja_coolsigmaker.so libbinja_coolsigmaker_mac_aarch64_stable.so
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            LICENSE
+            libbinja_coolsigmaker_linux_x64_dev.so
+            libbinja_coolsigmaker_linux_x64_stable.so
+          #
+            # libbinja_coolsigmaker_linux_aarch64_dev.so
+            # libbinja_coolsigmaker_linux_aarch64_stable.so
+            # libbinja_coolsigmaker_mac_x64_dev.so
+            # libbinja_coolsigmaker_mac_x64_stable.so
+            # libbinja_coolsigmaker_mac_aarch64_dev.so
+            # libbinja_coolsigmaker_mac_aarch64_stable.so
+
+
