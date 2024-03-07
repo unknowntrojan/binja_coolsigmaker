@@ -25,9 +25,9 @@ jobs:
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
-            toolchain: nightly
-            profile: minimal
-            override: true
+          toolchain: nightly
+          profile: minimal
+          override: true
 
       - name: Install targets
         run: |
@@ -58,7 +58,6 @@ jobs:
       #     CC: clang --target aarch64-unknown-linux-gnu
       #     CXX: clang++ --target aarch64-unknown-linux-gnu
       #   run: cargo build --release --target aarch64-unknown-linux-gnu && mv target/aarch64-unknown-linux-gnu/release/libbinja_coolsigmaker.so libbinja_coolsigmaker_linux_aarch64_stable.so
-        
 
       - name: Install Binja Dev API
         run: |
@@ -75,13 +74,11 @@ jobs:
       #     CXX: clang++ --target aarch64-unknown-linux-gnu
       #   run: cargo build --release --target aarch64-unknown-linux-gnu --config 'patch."https://github.com/Vector35/binaryninja-api".binaryninja.git="https://github.com/Vector35/binaryninja-api?branch=dev"' && mv target/aarch64-unknown-linux-gnu/release/libbinja_coolsigmaker.so libbinja_coolsigmaker_linux_aarch64_dev.so
 
-
       # - name: Build Dev - Mac x64
       #   run: cargo build --release --target x86_64-apple-darwin --config 'patch."https://github.com/Vector35/binaryninja-api".binaryninja.git="https://github.com/Vector35/binaryninja-api?branch=dev"' && mv target/release/libbinja_coolsigmaker.so libbinja_coolsigmaker_mac_x64_dev.so
 
       # - name: Build Stable - Mac x64
       #   run: cargo build --release --target x86_64-apple-darwin && mv target/release/libbinja_coolsigmaker.so libbinja_coolsigmaker_mac_x64_stable.so
-        
 
       # - name: Build Dev - Mac aarch64
       #   run: cargo build --release --target aarch64-apple-darwin --config 'patch."https://github.com/Vector35/binaryninja-api".binaryninja.git="https://github.com/Vector35/binaryninja-api?branch=dev"' && mv target/release/libbinja_coolsigmaker.so libbinja_coolsigmaker_mac_aarch64_dev.so
@@ -98,11 +95,9 @@ jobs:
             libbinja_coolsigmaker_linux_x64_dev.so
             libbinja_coolsigmaker_linux_x64_stable.so
           #
-            # libbinja_coolsigmaker_linux_aarch64_dev.so
-            # libbinja_coolsigmaker_linux_aarch64_stable.so
-            # libbinja_coolsigmaker_mac_x64_dev.so
-            # libbinja_coolsigmaker_mac_x64_stable.so
-            # libbinja_coolsigmaker_mac_aarch64_dev.so
-            # libbinja_coolsigmaker_mac_aarch64_stable.so
-
-
+          # libbinja_coolsigmaker_linux_aarch64_dev.so
+          # libbinja_coolsigmaker_linux_aarch64_stable.so
+          # libbinja_coolsigmaker_mac_x64_dev.so
+          # libbinja_coolsigmaker_mac_x64_stable.so
+          # libbinja_coolsigmaker_mac_aarch64_dev.so
+          # libbinja_coolsigmaker_mac_aarch64_stable.so

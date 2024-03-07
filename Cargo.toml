@@ -1,6 +1,6 @@
 [package]
 name = "binja_coolsigmaker"
-version = "0.1.5"
+version = "0.1.6"
 authors = ["unknowntrojan"]
 edition = "2021"
 
@@ -15,11 +15,11 @@ log = "0.4.17"
 clipboard = "0.5.0"
 rayon = "1.7.0"
 iced-x86 = "1.17.0"
-strum = { version = "0.25.0", features = ["derive"] }
+strum = { version = "0.26.1", features = ["derive"] }
 serde = { version = "1.0.152", features = ["std"] }
 serde_json = "1.0.93"
 thiserror = "1.0.43"
-coolfindpattern = "0.1.4"
+coolfindpattern = "0.1.6"
 binary-search = "0.1.2"
 
 # Dev

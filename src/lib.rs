@@ -590,9 +590,11 @@ fn create_pattern_internal_binarysearch(
 
     current_pattern.drain(instr.0 as usize + instr.1..);
 
-    while let Some(x) = current_pattern.last() && x.is_none() {
-		current_pattern.pop();
-	}
+    while let Some(x) = current_pattern.last()
+        && x.is_none()
+    {
+        current_pattern.pop();
+    }
 
     log::info!(
         "binsearch created pattern in {}ms",
@@ -704,9 +706,11 @@ fn create_pattern_internal(
         pattern_unique = is_pattern_unique(&data, &current_pattern);
     }
 
-    while let Some(x) = current_pattern.last() && x.is_none() {
-		current_pattern.pop();
-	}
+    while let Some(x) = current_pattern.last()
+        && x.is_none()
+    {
+        current_pattern.pop();
+    }
 
     log::info!(
         "created pattern in {}ms",
