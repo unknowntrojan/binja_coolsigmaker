@@ -22,6 +22,8 @@ This is how it looks to create a signature, then scan for it:
 
 ## How to install
 
+**Currently, binaryninjacore-sys does not support LLVM 18. Use LLVM 16 or 17. https://github.com/Vector35/binaryninja-api/issues/5390**
+
 1. Download the platform-appropriate binary from release section
 2. Place the binary in your Binary Ninja installation's plugin folder
 
