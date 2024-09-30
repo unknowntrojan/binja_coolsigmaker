@@ -5,7 +5,7 @@
         "helper"
     ],
     "api": [
-        "native"
+        "rust"
     ],
     "description": "SigMaker style plugin",
     "license": {
