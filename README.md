@@ -1,5 +1,7 @@
 # binja_coolsigmaker
 
+(**I apologize for the inconvenience, but due to a breaking change in the binaryninja crate, you will need to make a change to the entry point depending on which branch you build for.**)
+
 We all know signature scanning can be extremely useful. Sadly, the two public offerings for Binja are either very slow, or crash extremely often.
 
 This is why I wrote this plugin. It's a signature scanning and creating plugin for x86 (more archs are planned!), written in Rust. It's extremely fast, supports multiple signature styles, and works like a charm.

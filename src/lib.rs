@@ -989,9 +989,19 @@ impl Command for SigFinderCommand {
 
 #[no_mangle]
 pub extern "C" fn CorePluginInit() -> bool {
-    binaryninja::logger::Logger::new("coolsigmaker")
-        .with_level(log::LevelFilter::Info)
-        .init();
+
+    // Due to a breaking change in binaryninja-api, you will need to edit this line depending on which version you are building for.
+
+    // For dev branch:
+    // binaryninja::logger::Logger::new("coolsigmaker")
+    //    .with_level(log::LevelFilter::Info)
+    //    .init();
+
+    // For stable branch:
+    // binaryninja::logger::init(log::LevelFilter::Info).unwrap();
+
+    // And uncomment this. Sorry for the inconvenience.
+    compile_error!("sadly, due to a breaking change in the api crate, you will need to make a change to the code above this error.");
 
     // TODO: (maybe) if signature not found, maybe go back a few instructions and attempt to create a signature with an offset.
     // TODO: introduce a setting for "dumb" searches, where we also search non-executable segments for uniqueness, incase the user doesn't want to check the segments before scanning them.
