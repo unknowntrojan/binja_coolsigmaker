@@ -23,7 +23,6 @@ coolfindpattern = "0.1.6"
 binary-search = "0.1.2"
 
 
-# Due to a breaking change in the binaryninja crate, you will also need to uncomment the relevant portion of code in the entrypoint.
 # Dev
 # binaryninja = { git = "https://github.com/Vector35/binaryninja-api", branch = "dev" }
 # Stable

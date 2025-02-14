@@ -18,7 +18,7 @@
 //! along with this program.  If not, see <https://www.gnu.org/licenses/>.
 //!
 
-#![feature(let_chains, core_intrinsics, iter_array_chunks)]
+#![feature(let_chains, iter_array_chunks)]
 use std::borrow::Cow;
 
 use std::fmt::Display;
@@ -44,14 +44,12 @@ use iced_x86::{
 };
 use rayon::prelude::ParallelBridge;
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
-use strum::{
-    Display, EnumIter, EnumMessage, EnumString, EnumVariantNames, IntoEnumIterator, VariantNames,
-};
+use strum::{Display, EnumIter, EnumMessage, EnumString, IntoEnumIterator, VariantNames};
 
 type OwnedPattern = Vec<Option<u8>>;
 type Pattern<'a> = &'a [Option<u8>];
 
-#[derive(EnumIter, EnumVariantNames, EnumMessage, EnumString, Display)]
+#[derive(EnumIter, VariantNames, EnumMessage, EnumString, Display)]
 enum SignatureType {
     #[strum(message = "IDA-style signature with one ? wildcard per byte. (E9 ? ? ? ? 90)")]
     IDAOne,
@@ -989,19 +987,7 @@ impl Command for SigFinderCommand {
 
 #[no_mangle]
 pub extern "C" fn CorePluginInit() -> bool {
-
-    // Due to a breaking change in binaryninja-api, you will need to edit this line depending on which version you are building for.
-
-    // For dev branch:
-    // binaryninja::logger::Logger::new("coolsigmaker")
-    //    .with_level(log::LevelFilter::Info)
-    //    .init();
-
-    // For stable branch:
-    // binaryninja::logger::init(log::LevelFilter::Info).unwrap();
-
-    // And uncomment this. Sorry for the inconvenience.
-    compile_error!("sadly, due to a breaking change in the api crate, you will need to make a change to the code above this error.");
+    binaryninja::logger::init(log::LevelFilter::Info).unwrap();
 
     // TODO: (maybe) if signature not found, maybe go back a few instructions and attempt to create a signature with an offset.
     // TODO: introduce a setting for "dumb" searches, where we also search non-executable segments for uniqueness, incase the user doesn't want to check the segments before scanning them.

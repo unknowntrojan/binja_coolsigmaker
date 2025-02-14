@@ -1,6 +1,8 @@
-# binja_coolsigmaker
+# binja_coolsigmaker (stable channel)
 
-(**I apologize for the inconvenience, but due to a breaking change in the binaryninja crate, you will need to make a change to the entry point depending on which branch you build for.**)
+(**The dev branch now contains the version of the plugin for the binja development update channel.**)
+
+(**master/main will target stable.**)
 
 We all know signature scanning can be extremely useful. Sadly, the two public offerings for Binja are either very slow, or crash extremely often.
 
@@ -37,4 +39,6 @@ This project requires the nightly channel of Rust.
 
 Check the blog post above for a step-by-step.
 
-Check the Cargo.toml file and adjust the `binaryninja` dependency so it points to whatever Binja update channel you want to compile for. __!MAKE SURE!__ Cargo caught your change of branch. It sometimes doesn't realize you changed it. Delete `Cargo.lock` to make Cargo realize you did. Otherwise, it'll keep using whatever version was selected when you built or rust-analyzer ran.
+Checkout the branch of the repository matching the channel of binja you are building for.
+
+You are now one `cargo b` away from greatness.
