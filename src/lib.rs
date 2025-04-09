@@ -36,6 +36,8 @@ use binaryninja::{
     command::{self, AddressCommand, Command},
 };
 
+use binaryninja::logger::Logger;
+
 use clipboard::ClipboardProvider;
 use coolfindpattern::PatternSearcher;
 use iced_x86::{
@@ -987,7 +989,7 @@ impl Command for SigFinderCommand {
 
 #[no_mangle]
 pub extern "C" fn CorePluginInit() -> bool {
-    binaryninja::logger::init(log::LevelFilter::Info).unwrap();
+    Logger::default().init();
 
     // TODO: (maybe) if signature not found, maybe go back a few instructions and attempt to create a signature with an offset.
     // TODO: introduce a setting for "dumb" searches, where we also search non-executable segments for uniqueness, incase the user doesn't want to check the segments before scanning them.
