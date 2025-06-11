@@ -41,4 +41,6 @@ Check the blog post above for a step-by-step.
 
 Checkout the branch of the repository matching the channel of binja you are building for.
 
+If necessary, adjust the `binaryninja` dependency line in `Cargo.toml` to refer to your specific desired version, e.g. replace `branch = "master"` with ` tag = "v5.0.7486-stable"`
+
 You are now one `cargo b` away from greatness.

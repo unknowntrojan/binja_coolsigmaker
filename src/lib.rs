@@ -31,8 +31,7 @@ use binary_search::{binary_search, Direction};
 use binaryninja::settings::Settings;
 use binaryninja::{
     architecture::Architecture,
-    binaryninjacore_sys::{BNBinaryView, BNFreeRelocationRanges, BNGetRelocationRanges},
-    binaryview::{BinaryView, BinaryViewBase, BinaryViewExt},
+    binary_view::{BinaryView, BinaryViewBase, BinaryViewExt},
     command::{self, AddressCommand, Command},
 };
 
@@ -287,27 +286,13 @@ trait FromSignature {
 }
 
 fn get_relocation_ranges(bv: &BinaryView) -> Vec<Range<u64>> {
-    let mut count = 0usize;
-    let ptr = unsafe {
-        BNGetRelocationRanges(
-            *std::mem::transmute::<_, *mut *mut BNBinaryView>(bv),
-            &mut count as *mut usize,
-        )
-    };
-
-    let ranges = unsafe { std::slice::from_raw_parts(ptr, count) };
-
-    let ret = ranges
+    bv.relocation_ranges()
         .iter()
         .map(|range| Range {
             start: range.start,
             end: range.end,
         })
-        .collect::<Vec<_>>();
-
-    unsafe { BNFreeRelocationRanges(ptr) };
-
-    ret
+        .collect::<Vec<_>>()
 }
 
 fn get_code(bv: &BinaryView) -> Vec<(u64, Vec<u8>)> {
@@ -558,7 +543,7 @@ fn create_pattern_internal_binarysearch(
         // the range we were in at the start is still the same range as we are currently scanning
         if !bv.functions_containing(addr as u64).iter().any(|func| {
             func.address_ranges().iter().any(|range| {
-                range.start() <= addr && range.end() >= (instr_addr + instr.len() as u64) as u64
+                range.start <= addr && range.end >= (instr_addr + instr.len() as u64) as u64
             })
         }) {
             break;
@@ -692,7 +677,7 @@ fn create_pattern_internal(
         // the range we were in at the start is still the same range as we are currently scanning
         if !bv.functions_containing(addr as u64).iter().any(|func| {
             func.address_ranges().iter().any(|range| {
-                range.start() <= addr && range.end() >= (instr_addr + instr.len() as u64) as u64
+                range.start <= addr && range.end >= (instr_addr + instr.len() as u64) as u64
             })
         }) {
             break;
@@ -790,26 +775,24 @@ fn get_clipboard_contents() -> Result<String, Box<dyn std::error::Error>> {
     ctx.get_contents()
 }
 
-fn get_maximum_signature_size(bv: &BinaryView) -> u64 {
-    Settings::new("default").get_integer("coolsigmaker.maximum_size", Some(bv), None)
+fn get_maximum_signature_size(_bv: &BinaryView) -> u64 {
+    Settings::new().get_integer("coolsigmaker.maximum_size")
 }
 
-fn get_include_operands(bv: &BinaryView) -> bool {
-    Settings::new("default").get_bool("coolsigmaker.include_operands", Some(bv), None)
+fn get_include_operands(_bv: &BinaryView) -> bool {
+    Settings::new().get_bool("coolsigmaker.include_operands")
 }
 
-fn get_binary_search(bv: &BinaryView) -> bool {
-    Settings::new("default").get_bool("coolsigmaker.binary_search", Some(bv), None)
+fn get_binary_search(_bv: &BinaryView) -> bool {
+    Settings::new().get_bool("coolsigmaker.binary_search")
 }
 
-fn get_signature_type(bv: &BinaryView) -> SignatureType {
-    SignatureType::from_str(
-        Settings::new("default")
-            .get_string("coolsigmaker.sig_type", Some(bv), None)
-            .as_str(),
-    )
-    .map_err(|_| log::error!("invalid value for coolsigmaker.sig_type! falling back to default!"))
-    .unwrap_or(SignatureType::IDATwo)
+fn get_signature_type(_bv: &BinaryView) -> SignatureType {
+    SignatureType::from_str(Settings::new().get_string("coolsigmaker.sig_type").as_str())
+        .map_err(|_| {
+            log::error!("invalid value for coolsigmaker.sig_type! falling back to default!")
+        })
+        .unwrap_or(SignatureType::IDATwo)
 }
 
 fn register_settings() {
@@ -873,7 +856,7 @@ fn register_settings() {
         settings.register_setting_json(name, properties);
     }
 
-    let settings = Settings::new("default");
+    let settings = Settings::new();
 
     settings.register_group("coolsigmaker", "CoolSigMaker");
 
@@ -987,7 +970,8 @@ impl Command for SigFinderCommand {
 
 #[no_mangle]
 pub extern "C" fn CorePluginInit() -> bool {
-    binaryninja::logger::init(log::LevelFilter::Info).unwrap();
+    let logger = binaryninja::logger::Logger::new("CoolSigMaker");
+    logger.with_level(log::LevelFilter::Info).init();
 
     // TODO: (maybe) if signature not found, maybe go back a few instructions and attempt to create a signature with an offset.
     // TODO: introduce a setting for "dumb" searches, where we also search non-executable segments for uniqueness, incase the user doesn't want to check the segments before scanning them.
@@ -1013,13 +997,13 @@ pub extern "C" fn CorePluginInit() -> bool {
 
     register_settings();
 
-    command::register_for_address(
+    command::register_command_for_address(
         "CSM - Create Signature from Address",
         "Creates a Signature from the currently selected address",
         SigMakerCommand {},
     );
 
-    command::register(
+    command::register_command(
         "CSM - Find Signature",
         "Finds a signature in the binary.",
         SigFinderCommand {},
