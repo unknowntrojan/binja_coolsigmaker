@@ -814,7 +814,7 @@ fn register_settings() {
 		"#
         );
 
-        settings.register_setting_json(name, properties);
+        settings.register_setting_json(name, &properties);
     }
 
     fn register_enum_setting<T>(settings: &Settings, name: &str, title: &str, description: &str)
@@ -843,7 +843,7 @@ fn register_settings() {
             serde_json::to_string(&enum_descriptions).unwrap()
         );
 
-        settings.register_setting_json(name, properties);
+        settings.register_setting_json(name, &properties);
     }
 
     let settings = Settings::new();
