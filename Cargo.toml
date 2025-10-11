@@ -19,7 +19,7 @@ strum = { version = "0.26.1", features = ["derive"] }
 serde = { version = "1.0.152", features = ["std"] }
 serde_json = "1.0.93"
 thiserror = "1.0.43"
-coolfindpattern = "0.1.6"
+coolfindpattern = "0.1.7"
 binary-search = "0.1.2"
 
 
