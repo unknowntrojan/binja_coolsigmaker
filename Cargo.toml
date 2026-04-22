@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 # Local Development
 # binaryninja = { path = "../binaryninja-api/rust" }
 
-log = "0.4.17"
+tracing = "0.1"
 clipboard = "0.5"
 rayon = "1.11"
 iced-x86 = "1.17.0"
@@ -26,4 +26,4 @@ binary-search = "0.1.3"
 # Dev
 # binaryninja = { git = "https://github.com/Vector35/binaryninja-api", branch = "dev" }
 # Stable
-binaryninja = { git = "https://github.com/Vector35/binaryninja-api", tag = "stable/5.1.8104" }
+binaryninja = { git = "https://github.com/Vector35/binaryninja-api", tag = "stable/5.3.9434" }

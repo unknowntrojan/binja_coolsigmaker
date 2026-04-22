@@ -42,6 +42,7 @@ use iced_x86::{
     ConstantOffsets, FlowControl, Formatter, Instruction, NasmFormatter, OpKind,
 };
 use rayon::prelude::{IntoParallelRefIterator, ParallelBridge, ParallelIterator};
+use serde_json::json;
 use strum::{Display, EnumIter, EnumMessage, EnumString, IntoEnumIterator, VariantNames};
 
 type OwnedPattern = Vec<Option<u8>>;
@@ -168,7 +169,7 @@ impl FromSignature for OwnedPattern {}
 
 trait FromSignature {
     fn from_signature(mut pattern: String, signature_type: SignatureType) -> Option<OwnedPattern> {
-        log::info!("attempting to parse a {signature_type}-style signature! \"{pattern}\"");
+        tracing::info!("attempting to parse a {signature_type}-style signature! \"{pattern}\"");
 
         pattern = pattern.replace("\n", "");
         pattern = pattern.replace("\r", "");
@@ -194,7 +195,7 @@ trait FromSignature {
                     } else {
                         let Ok(byte) = u8::from_str_radix(&format!("{}{}", byte[0], byte[1]), 16)
                         else {
-                            log::error!("unable to parse pattern!");
+                            tracing::error!("unable to parse pattern!");
                             return None;
                         };
 
@@ -220,7 +221,7 @@ trait FromSignature {
             let parts = pattern.split(" ").collect::<Vec<_>>();
 
             if parts.len() != 2 {
-                log::error!("unable to parse pattern!");
+                tracing::error!("unable to parse pattern!");
                 return None;
             }
 
@@ -244,7 +245,7 @@ trait FromSignature {
                         let mut result = vec![
                             u8::from_str_radix(&byte, 16)
                                 .map_err(|x| {
-                                    log::error!("unable to parse pattern!");
+                                    tracing::error!("unable to parse pattern!");
                                     x
                                 })
                                 .ok(),
@@ -271,7 +272,7 @@ trait FromSignature {
                         pattern.push(None);
                     }
                     _ => {
-                        log::error!("invalid char encountered!");
+                        tracing::error!("invalid char encountered!");
                     }
                 }
             }
@@ -452,7 +453,7 @@ fn create_pattern_internal_binarysearch(
     data: &[(u64, Vec<u8>)],
     include_operands: bool,
 ) -> Result<OwnedPattern, SignatureError> {
-    log::info!("creating pattern for address {:#04X}", addr);
+    tracing::info!("creating pattern for address {:#04X}", addr);
     let time = SystemTime::now();
 
     let mut formatter = NasmFormatter::new();
@@ -477,7 +478,7 @@ fn create_pattern_internal_binarysearch(
         .ok_or(SignatureError::InvalidSegment)?;
 
     #[cfg(debug_assertions)]
-    log::info!("max sig size: {max_size}");
+    tracing::info!("max sig size: {max_size}");
 
     loop {
         let instr_addr = addr + current_offset;
@@ -523,7 +524,7 @@ fn create_pattern_internal_binarysearch(
         )?;
 
         #[cfg(debug_assertions)]
-        log::info!(
+        tracing::info!(
             "{}: {}",
             instr_string,
             RustPattern(Cow::Borrowed(&instr_pattern))
@@ -555,7 +556,7 @@ fn create_pattern_internal_binarysearch(
             let pat = &current_pattern[0..instr.0 as usize + instr.1];
 
             #[cfg(debug_assertions)]
-            log::info!("{}", RustPattern(Cow::Borrowed(&pat.to_vec())));
+            tracing::info!("{}", RustPattern(Cow::Borrowed(&pat.to_vec())));
 
             match is_pattern_unique(&data, pat) {
                 false => Direction::Low(()),
@@ -573,7 +574,7 @@ fn create_pattern_internal_binarysearch(
         current_pattern.pop();
     }
 
-    log::info!(
+    tracing::info!(
         "binsearch created pattern in {}ms",
         SystemTime::now().duration_since(time).unwrap().as_millis()
     );
@@ -587,7 +588,7 @@ fn create_pattern_internal(
     data: &[(u64, Vec<u8>)],
     include_operands: bool,
 ) -> Result<OwnedPattern, SignatureError> {
-    log::info!("creating pattern for address {:#04X}", addr);
+    tracing::info!("creating pattern for address {:#04X}", addr);
     let time = SystemTime::now();
 
     let mut formatter = NasmFormatter::new();
@@ -611,7 +612,7 @@ fn create_pattern_internal(
         .ok_or(SignatureError::InvalidSegment)?;
 
     #[cfg(debug_assertions)]
-    log::info!("max sig size: {max_size}");
+    tracing::info!("max sig size: {max_size}");
 
     while !pattern_unique {
         let instr_addr = addr + current_offset;
@@ -657,7 +658,7 @@ fn create_pattern_internal(
         )?;
 
         #[cfg(debug_assertions)]
-        log::info!(
+        tracing::info!(
             "{}: {}",
             instr_string,
             RustPattern(Cow::Borrowed(&instr_pattern))
@@ -689,7 +690,7 @@ fn create_pattern_internal(
         current_pattern.pop();
     }
 
-    log::info!(
+    tracing::info!(
         "created pattern in {}ms",
         SystemTime::now().duration_since(time).unwrap().as_millis()
     );
@@ -709,14 +710,14 @@ fn create_pattern(bv: &BinaryView, addr: u64) -> Result<OwnedPattern, SignatureE
 
         let _ = pattern
             .as_ref()
-            .map(|pat| log::info!("{}", RustPattern(Cow::Borrowed(&pat))));
+            .map(|pat| tracing::info!("{}", RustPattern(Cow::Borrowed(&pat))));
 
         let _ = binsearch_pattern
             .as_ref()
-            .map(|pat| log::info!("{}", RustPattern(Cow::Borrowed(&pat))));
+            .map(|pat| tracing::info!("{}", RustPattern(Cow::Borrowed(&pat))));
 
         if pattern.as_ref().unwrap() != binsearch_pattern.as_ref().unwrap() {
-            log::error!("patterns dont match :(((");
+            tracing::error!("patterns dont match :(((");
         }
     }
 
@@ -727,7 +728,7 @@ fn create_pattern(bv: &BinaryView, addr: u64) -> Result<OwnedPattern, SignatureE
     };
 
     let pattern = if !include_operands && matches!(pattern, Err(SignatureError::NotUnique(_))) {
-        log::warn!(
+        tracing::warn!(
             "unable to find a unique pattern that didn't include operands. trying again with operands!"
         );
         if get_binary_search(bv) {
@@ -743,7 +744,7 @@ fn create_pattern(bv: &BinaryView, addr: u64) -> Result<OwnedPattern, SignatureE
         .as_ref()
         .is_ok_and(|pat| !is_pattern_unique(&data, &pat))
     {
-        log::error!("signature not unique, cannot proceed!");
+        tracing::error!("signature not unique, cannot proceed!");
         return Err(SignatureError::NotUnique(
             pattern.map_or(0u64, |pat| pat.len() as u64),
         ));
@@ -753,9 +754,9 @@ fn create_pattern(bv: &BinaryView, addr: u64) -> Result<OwnedPattern, SignatureE
 }
 
 fn emit_result(contents: String) {
-    log::info!("{}", &contents);
+    tracing::info!("{}", &contents);
     if let Err(e) = set_clipboard_contents(contents) {
-        log::error!("unable to copy to clipboard: {}", e);
+        tracing::error!("unable to copy to clipboard: {}", e);
     }
 }
 
@@ -786,7 +787,7 @@ fn get_binary_search(_bv: &BinaryView) -> bool {
 fn get_signature_type(_bv: &BinaryView) -> SignatureType {
     SignatureType::from_str(Settings::new().get_string("coolsigmaker.sig_type").as_str())
         .map_err(|_| {
-            log::error!("invalid value for coolsigmaker.sig_type! falling back to default!")
+            tracing::error!("invalid value for coolsigmaker.sig_type! falling back to default!")
         })
         .unwrap_or(SignatureType::IDATwo)
 }
@@ -799,28 +800,24 @@ fn register_settings() {
         description: &str,
         typ: &str,
         default: T,
+        extra_properties: &[(&str, &serde_json::Value)],
     ) where
-        T: core::fmt::Display,
+        T: core::fmt::Display + serde::Serialize,
     {
-        let default = if typ == "string" {
-            format!("\"{}\"", default)
-        } else {
-            format!("{}", default)
-        };
+        let mut properties_val = json!({
+            "title": title,
+            "type": typ,
+            "default": default,
+            "description": description,
+            "ignore": ["SettingsProjectScope", "SettingsResourceScope"],
+        });
 
-        let properties = format!(
-            r#"
-		{{
-			"title": "{title}",
-			"type": "{typ}",
-			"default": {default},
-			"description": "{description}",
-			"ignore": ["SettingsProjectScope", "SettingsResourceScope"]
-		}}
-		"#
-        );
+        let properties = properties_val.as_object_mut().unwrap();
+        for (key, val) in extra_properties {
+            properties.insert(key.to_string(), (*val).clone());
+        }
 
-        settings.register_setting_json(name, &properties);
+        settings.register_setting_json(name, &properties_val.to_string());
     }
 
     fn register_enum_setting<T>(settings: &Settings, name: &str, title: &str, description: &str)
@@ -863,6 +860,7 @@ fn register_settings() {
         "Include immediate operands that aren't memory-relative or relocated when creating signatures. This results in smaller, but potentially more fragile, signatures. If no unique signature can be generated without operands, we fall back to including them.",
         "boolean",
         false,
+        &[],
     );
 
     register_setting::<bool>(
@@ -872,6 +870,7 @@ fn register_settings() {
         "Use a binary search to determine instruction uniqueness. For small binaries, this will be slower than the default, while for bigger binaries it might be faster. It starts scanning at half the maximum signature size. There is no heuristic implemented to automatically determine this yet.",
         "boolean",
         false,
+        &[],
     );
 
     register_setting::<u64>(
@@ -881,6 +880,11 @@ fn register_settings() {
         "The maximum size the signature will accumulate before giving up.",
         "number",
         64,
+        &[
+            ("minValue", &json!(0)),
+            // i32::MAX is one before when the widget changes from a spinner to a hex input box
+            ("maxValue", &json!(i32::MAX)),
+        ],
     );
 
     register_enum_setting::<SignatureType>(
@@ -937,7 +941,7 @@ impl AddressCommand for SigMakerCommand {
                 emit_result(format!("{}", pattern));
             }
             Err(e) => {
-                log::error!("unable to create pattern! {e}");
+                tracing::error!("unable to create pattern! {e}");
             }
         }
     }
@@ -951,7 +955,7 @@ impl AddressCommand for SigMakerCommand {
 impl Command for SigFinderCommand {
     fn action(&self, bv: &BinaryView) {
         let Ok(sig) = get_clipboard_contents() else {
-            log::error!("unable to get signature from clipboard!");
+            tracing::error!("unable to get signature from clipboard!");
             return;
         };
 
@@ -960,14 +964,14 @@ impl Command for SigFinderCommand {
         let data = get_code(bv);
 
         let Some(pattern) = OwnedPattern::from_signature(sig, get_signature_type(bv)) else {
-            log::error!("failed to parse pattern.");
+            tracing::error!("failed to parse pattern.");
             return;
         };
 
         find_patterns(&data, &pattern)
-            .for_each(|occurrence| log::info!("found signature at {:#04X}", occurrence));
+            .for_each(|occurrence| tracing::info!("found signature at {:#04X}", occurrence));
 
-        log::info!(
+        tracing::info!(
             "scan finished in {}ms.",
             SystemTime::now().duration_since(time).unwrap().as_millis()
         );
@@ -980,15 +984,14 @@ impl Command for SigFinderCommand {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn CorePluginInit() -> bool {
-    let logger = binaryninja::logger::Logger::new("CoolSigMaker");
-    logger.with_level(log::LevelFilter::Info).init();
+    binaryninja::tracing_init!("CoolSigMaker");
 
     // TODO: (maybe) if signature not found, maybe go back a few instructions and attempt to create a signature with an offset.
     // TODO: introduce a setting for "dumb" searches, where we also search non-executable segments for uniqueness, incase the user doesn't want to check the segments before scanning them.
     // TODO: make a fancy regex to distinguish signature types automagically (without accidental mismatches occurring)
 
-    log::info!("binja_coolsigmaker by unknowntrojan loaded!");
-    log::info!("say hello to the little ninja in your binja");
+    tracing::info!("binja_coolsigmaker by unknowntrojan loaded!");
+    tracing::info!("say hello to the little ninja in your binja");
 
     #[cfg(debug_assertions)]
     std::panic::set_hook(Box::new(|info| {
@@ -1002,7 +1005,7 @@ pub extern "C" fn CorePluginInit() -> bool {
         // #[cfg(debug_assertions)]
         let _ = std::fs::write("E:\\log.txt", &string);
 
-        log::info!("{}", &string);
+        tracing::info!("{}", &string);
     }));
 
     register_settings();
